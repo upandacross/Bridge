@@ -71,6 +71,12 @@ class Database:
             )
         ''')
         
+        # Create unique index for first, last, phone combination to enforce uniqueness
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS first_last_phone_idx 
+            ON User(first, last, phone)
+        ''')
+        
         # Attendance table - tracks actual attendance
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS Attendance (
