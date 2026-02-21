@@ -1,3 +1,4 @@
+#!/bin/env python
 """
 DearPyGUI Frontend for Bridge Attendance Application.
 Provides CRUD operations and attendance tracking.
@@ -7,6 +8,7 @@ import dearpygui.dearpygui as dpg
 from database import Database
 from pathlib import Path
 from datetime import date
+from typing import Optional, List, Dict, Any
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -63,6 +65,9 @@ class BridgeApp:
                 
                 with dpg.tab(label="Month Schedule") as self.month_schedule_tab_id:
                     self._build_month_schedule_view()
+                
+                with dpg.tab(label="Edit Attendance") as self.edit_attendance_tab_id:
+                    self._build_edit_attendance_view()
         
         dpg.create_viewport(title='Bridge Attendance', width=1200, height=800)
         dpg.setup_dearpygui()
@@ -133,6 +138,7 @@ class BridgeApp:
             dpg.add_table_column(label="Email")
             dpg.add_table_column(label="Active")
             dpg.add_table_column(label="Days")
+            dpg.add_table_column(label="Actions")
             
             # Add header row
             with dpg.table_row():
@@ -142,6 +148,7 @@ class BridgeApp:
                 dpg.add_text("Email")
                 dpg.add_text("Active")
                 dpg.add_text("Days")
+                dpg.add_text("Actions")
             
             if search:
                 users = self.db.search_users(search)
@@ -155,6 +162,23 @@ class BridgeApp:
                 if user.get('play_fridays'):
                     days.append("Fri")
                 
+                # Create a copy of the user dict to capture in the lambda
+                user_copy = {
+                    'id': user['id'],
+                    'first': user.get('first', ''),
+                    'last': user.get('last', ''),
+                    'active': user.get('active', True),
+                    'play_thursdays': user.get('play_thursdays', False),
+                    'play_fridays': user.get('play_fridays', False),
+                    'phone': user.get('phone'),
+                    'email': user.get('email'),
+                    'prefer_email': user.get('prefer_email', False),
+                    'prefer_phone': user.get('prefer_phone', False),
+                    'prefer_text': user.get('prefer_text', False),
+                    'all_month': user.get('all_month', True),
+                    'select_days': user.get('select_days', False)
+                }
+                
                 with dpg.table_row():
                     dpg.add_text(str(user['id']))
                     dpg.add_text(f"{user.get('first', '')} {user.get('last', '')}")
@@ -162,6 +186,8 @@ class BridgeApp:
                     dpg.add_text(user.get('email', 'N/A'))
                     dpg.add_text("Yes" if user.get('active', True) else "No")
                     dpg.add_text("/".join(days))
+                    # Use user_id to fetch fresh data when button is clicked
+                    dpg.add_button(label="Edit", user_data=user['id'], callback=self._on_edit_user_clicked)
     
     def _show_add_user_dialog(self):
         """Show dialog to add a new user."""
@@ -223,6 +249,114 @@ class BridgeApp:
             
             dpg.delete_item(window_id)
             self._populate_users_table()
+        except ValueError as e:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text(str(e))
+    
+    def _on_edit_user_clicked(self, sender, app_data):
+        """Handle edit button click - fetch user from database using user_data."""
+        # Get the user_id from the button's user_data
+        user_id = dpg.get_item_user_data(sender)
+        
+        if user_id is None:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text("Error: Could not get user ID from button")
+            return
+        
+        # Fetch fresh user data from database
+        user = self.db.get_user(user_id)
+        
+        if user is None:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text(f"Error: User with ID {user_id} not found in database")
+            return
+        
+        # Show the edit dialog with the fresh user data
+        self._show_edit_user_dialog(user)
+    
+    def _show_edit_user_dialog(self, user: Dict[str, Any]):
+        """Show dialog to edit an existing user."""
+        # Debug: Check if user is None or invalid
+        if user is None:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text("Error: User data is None")
+            return
+        
+        if not isinstance(user, dict):
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text(f"Error: User data is not a dict, it's {type(user)}")
+            return
+        
+        if 'first' not in user or 'last' not in user:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text(f"Error: User data missing required fields. Keys: {list(user.keys())}")
+            return
+        
+        with dpg.window(label=f"Edit User: {user['first']} {user['last']}", width=400, pos=(100, 100)) as window_id:
+            with dpg.group():
+                dpg.add_input_text(tag="edit_user_first", label="First Name", default_value=user.get('first', ''))
+                dpg.add_input_text(tag="edit_user_last", label="Last Name", default_value=user.get('last', ''))
+                
+                dpg.add_checkbox(tag="edit_user_active", label="Active", default_value=bool(user.get('active', True)))
+                dpg.add_checkbox(tag="edit_user_thursdays", label="Plays Thursdays", default_value=bool(user.get('play_thursdays', False)))
+                dpg.add_checkbox(tag="edit_user_fridays", label="Plays Fridays", default_value=bool(user.get('play_fridays', False)))
+                
+                dpg.add_input_text(tag="edit_user_phone", label="Phone Number", default_value=user.get('phone', '') or '')
+                dpg.add_input_text(tag="edit_user_email", label="Email", default_value=user.get('email', '') or '')
+                
+                dpg.add_spacer(height=10)
+                dpg.add_checkbox(tag="edit_user_prefer_email", label="Prefer Email", default_value=bool(user.get('prefer_email', False)))
+                dpg.add_checkbox(tag="edit_user_prefer_phone", label="Prefer Phone", default_value=bool(user.get('prefer_phone', False)))
+                dpg.add_checkbox(tag="edit_user_prefer_text", label="Prefer Text", default_value=bool(user.get('prefer_text', False)))
+                
+                dpg.add_spacer(height=10)
+                dpg.add_checkbox(tag="edit_user_all_month", label="All Month", default_value=bool(user.get('all_month', True)))
+                dpg.add_checkbox(tag="edit_user_select_days", label="Select Days", default_value=bool(user.get('select_days', False)))
+            
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Save", callback=lambda: self._save_edit_user(window_id, user['id']))
+                dpg.add_button(label="Cancel", callback=lambda: dpg.delete_item(window_id))
+    
+    def _save_edit_user(self, window_id, user_id: int):
+        """Save changes to an existing user."""
+        first = dpg.get_value("edit_user_first")
+        last = dpg.get_value("edit_user_last")
+        active = dpg.get_value("edit_user_active")
+        play_thursdays = dpg.get_value("edit_user_thursdays")
+        play_fridays = dpg.get_value("edit_user_fridays")
+        phone = dpg.get_value("edit_user_phone") or None
+        email = dpg.get_value("edit_user_email") or None
+        prefer_email = dpg.get_value("edit_user_prefer_email")
+        prefer_phone = dpg.get_value("edit_user_prefer_phone")
+        prefer_text = dpg.get_value("edit_user_prefer_text")
+        all_month = dpg.get_value("edit_user_all_month")
+        select_days = dpg.get_value("edit_user_select_days")
+        
+        try:
+            success = self.db.update_user(
+                user_id,
+                first=first,
+                last=last,
+                active=active,
+                play_thursdays=play_thursdays,
+                play_fridays=play_fridays,
+                email=email,
+                phone=phone,
+                prefer_email=prefer_email,
+                prefer_phone=prefer_phone,
+                prefer_text=prefer_text,
+                all_month=all_month,
+                select_days=select_days
+            )
+            
+            if success:
+                dpg.delete_item(window_id)
+                self._populate_users_table()
+                with dpg.window(label="Success", width=300, pos=(150, 150)):
+                    dpg.add_text("User updated successfully!")
+            else:
+                with dpg.window(label="Error", width=300, pos=(150, 150)):
+                    dpg.add_text("Failed to update user.")
         except ValueError as e:
             with dpg.window(label="Error", width=300, pos=(150, 150)):
                 dpg.add_text(str(e))
@@ -401,19 +535,23 @@ class BridgeApp:
     
     def show_users_view(self):
         """Switch to users view."""
-        dpg.set_tab_item_open("Users", True)
+        if hasattr(self, 'tab_bar_id'):
+            dpg.set_value(self.tab_bar_id, "Users")
     
     def show_attendance_report(self):
         """Switch to attendance report view."""
-        dpg.set_tab_item_open("Attendance Report", True)
+        if hasattr(self, 'tab_bar_id'):
+            dpg.set_value(self.tab_bar_id, "Attendance Report")
     
     def show_month_schedule(self):
         """Switch to month schedule view."""
-        dpg.set_tab_item_open("Month Schedule", True)
+        if hasattr(self, 'tab_bar_id'):
+            dpg.set_value(self.tab_bar_id, "Month Schedule")
     
     def show_all_users_report(self):
         """Switch to all users report view."""
-        dpg.set_tab_item_open("All Users Report", True)
+        if hasattr(self, 'tab_bar_id'):
+            dpg.set_value(self.tab_bar_id, "All Users Report")
     
     def _build_all_users_report_view(self):
         """Build the all users report view."""
@@ -800,6 +938,320 @@ class BridgeApp:
         selected_index = dpg.get_value(user_select)
         # Parse the selected user info
         # This would need to be implemented based on actual selection mechanism
+
+    def _build_edit_attendance_view(self):
+        """Build the edit attendance view."""
+        current_year = int(__import__('datetime').date.today().year)
+        years = list(range(2020, current_year + 1))
+        months = ["January", "February", "March", "April", "May", "June",
+                 "July", "August", "September", "October", "November", "December"]
+        
+        with dpg.group(horizontal=True):
+            with dpg.group(width=300):
+                dpg.add_text("Edit Attendance")
+                
+                dpg.add_combo(tag="edit_attendance_month", items=months, 
+                             default_value=months[__import__('datetime').date.today().month - 1])
+                dpg.add_combo(tag="edit_attendance_year", items=[str(y) for y in years], 
+                             default_value=str(current_year))
+                
+                dpg.add_spacer(height=10)
+                dpg.add_text("Select User:")
+                dpg.add_input_text(tag="edit_attendance_search", label="Name or Phone")
+                dpg.add_button(label="Find User", callback=self._edit_attendance_find_user, width=-1)
+                
+                # Placeholder for user selection and attendance table
+                with dpg.group(tag="edit_attendance_user_section", show=False):
+                    dpg.add_spacer(height=10)
+                    dpg.add_text("Selected User:", tag="edit_attendance_user_label_static")
+                    dpg.add_spacer(height=10)
+                    dpg.add_text("Attendance Data:")
+                    # This will be populated dynamically
+                    
+                dpg.add_spacer(height=20)
+                # Create the save button with a proper tag
+                dpg.add_button(label="Save Changes", callback=self._save_edit_attendance, 
+                              width=-1, show=False, tag="edit_attendance_save_button")
+            
+            # Right side container for the attendance table
+            with dpg.group(tag="edit_attendance_right_panel"):
+                dpg.add_text("Select a user to edit attendance")
+        
+        # Initialize the attendance data storage
+        self.edit_attendance_data = {'thursdays': [], 'fridays': []}
+    
+    def _edit_attendance_find_user(self):
+        """Find user for attendance editing."""
+        search_text = dpg.get_value("edit_attendance_search")
+        
+        if not search_text:
+            return
+        
+        # Search by phone or name
+        users = []
+        if len(search_text) >= 3 and search_text.isdigit():
+            user = self.db.get_user_by_phone(search_text)
+            if user:
+                users.append(user)
+        else:
+            users = self.db.search_users(search_text)
+        
+        if not users:
+            with dpg.window(label="Not Found", width=300, pos=(150, 150)):
+                dpg.add_text("No user found matching search criteria.")
+            return
+        
+        # Store the users for later use
+        self.edit_attendance_users = users
+        
+        # Show user selection
+        user_section = "edit_attendance_user_section"
+        
+        if dpg.does_item_exist(user_section):
+            dpg.show_item(user_section)
+            
+            # Update user label with options
+            user_options = [f"{u['first']} {u['last']} ({u.get('phone', 'N/A')})" for u in users]
+            
+            # Check if the combo already exists and delete it if so
+            if dpg.does_item_exist("edit_attendance_user_select"):
+                dpg.delete_item("edit_attendance_user_select")
+            
+            if dpg.does_item_exist("edit_attendance_user_label"):
+                dpg.delete_item("edit_attendance_user_label")
+            
+            with dpg.group(parent=user_section, tag="edit_attendance_user_combo_group"):
+                dpg.add_text("Select from results:", tag="edit_attendance_user_label")
+                dpg.add_combo(tag="edit_attendance_user_select", items=user_options, width=-1,
+                             callback=self._on_user_selected, default_value=user_options[0])
+        
+        # Show the save button
+        if dpg.does_item_exist("edit_attendance_save_button"):
+            dpg.show_item("edit_attendance_save_button")
+        
+        # If only one user found, automatically select them
+        if len(users) == 1:
+            self._on_user_selected("edit_attendance_user_select", None)
+    
+    def _on_user_selected(self, sender, app_data):
+        """Handle user selection from combo box."""
+        if not hasattr(self, 'edit_attendance_users'):
+            return
+        
+        # Get the selected value - dpg.get_value returns the selected item text, not index
+        selected_value = dpg.get_value("edit_attendance_user_select")
+        
+        # Find the user by matching the combo box text
+        selected_user = None
+        for user in self.edit_attendance_users:
+            user_text = f"{user['first']} {user['last']} ({user.get('phone', 'N/A')})"
+            if user_text == selected_value:
+                selected_user = user
+                break
+        
+        if not selected_user:
+            return
+        
+        # Get the selected month and year
+        month_names = ["January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "October", "November", "December"]
+        month_map = {name: i + 1 for i, name in enumerate(month_names)}
+        
+        selected_month = month_map.get(dpg.get_value("edit_attendance_month"), 
+                                      __import__('datetime').date.today().month)
+        selected_year = int(dpg.get_value("edit_attendance_year"))
+        
+        # Get or create the month record
+        month_record = self.db.get_or_create_month(selected_month, selected_year)
+        
+        # Build the attendance table for this user and month
+        self._build_attendance_table(month_record, selected_user['id'])
+    
+    def _save_edit_attendance(self):
+        """Save attendance changes."""
+        user_select = "edit_attendance_user_select"
+        
+        if not dpg.does_item_exist(user_select):
+            return
+        
+        if not hasattr(self, 'edit_attendance_users'):
+            return
+        
+        # Get the selected value - dpg.get_value returns the selected item text, not index
+        selected_value = dpg.get_value(user_select)
+        
+        # Find the user by matching the combo box text
+        selected_user = None
+        for user in self.edit_attendance_users:
+            user_text = f"{user['first']} {user['last']} ({user.get('phone', 'N/A')})"
+            if user_text == selected_value:
+                selected_user = user
+                break
+        
+        if not selected_user:
+            return
+            
+        user_id = selected_user['id']
+        
+        # Get the selected month and year
+        month_names = ["January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "October", "November", "December"]
+        month_map = {name: i + 1 for i, name in enumerate(month_names)}
+        
+        selected_month = month_map.get(dpg.get_value("edit_attendance_month"), 
+                                      __import__('datetime').date.today().month)
+        selected_year = int(dpg.get_value("edit_attendance_year"))
+        
+        # Get the month record
+        month_record = self.db.get_month_by_date(selected_month, selected_year)
+        if not month_record:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text("No month record found for the selected date.")
+            return
+        
+        mytf_id = month_record['id']
+        
+        # Update the attendance data with what's in our edit_attendance_data
+        if hasattr(self, 'edit_attendance_data') and 'thursdays' in self.edit_attendance_data and 'fridays' in self.edit_attendance_data:
+            thursdays = self.edit_attendance_data['thursdays']
+            fridays = self.edit_attendance_data['fridays']
+            
+            # Save the attendance data
+            self.db.update_attendance(mytf_id, user_id, thursdays, fridays)
+            
+            with dpg.window(label="Success", width=300, pos=(150, 150)):
+                dpg.add_text("Attendance saved successfully!")
+    
+    
+    def _build_attendance_table(self, month_record: Dict[str, Any], user_id: int):
+        """Build the attendance table for the given month and user."""
+        # Clear the right panel
+        right_panel = "edit_attendance_right_panel"
+        if dpg.does_item_exist(right_panel):
+            dpg.delete_item(right_panel, children_only=True)
+        
+        # Get the user info
+        user = self.db.get_user(user_id)
+        if not user:
+            return
+        
+        # Get attendance data for this user and month
+        mytf_id = month_record['id']
+        num_thursdays = len(month_record.get('thursdays', '').split(',')) if month_record.get('thursdays') else 0
+        num_fridays = len(month_record.get('fridays', '').split(',')) if month_record.get('fridays') else 0
+        
+        attendance_data = self.db.get_or_create_attendance(mytf_id, user_id, num_thursdays, num_fridays)
+        
+        # Store the data for later use in saving
+        self.edit_attendance_data = {
+            'thursdays': attendance_data['thursdays'][:],
+            'fridays': attendance_data['fridays'][:]
+        }
+        
+        # Get the dates for thursdays and fridays
+        thursday_dates = month_record.get('thursdays', '').split(',') if month_record.get('thursdays') else []
+        friday_dates = month_record.get('fridays', '').split(',') if month_record.get('fridays') else []
+        
+        # Filter dates based on user preferences
+        if not user.get('play_thursdays'):
+            thursday_dates = []
+        if not user.get('play_fridays'):
+            friday_dates = []
+        
+        # Create the table with proper headers in the right panel
+        with dpg.group(parent=right_panel):
+            dpg.add_text(f"Editing attendance for {user['first']} {user['last']}")
+            dpg.add_spacer(height=10)
+            
+            with dpg.table(header_row=True, policy=dpg.mvTable_SizingFixedFit,
+                          scrollX=True, scrollY=True, row_background=True,
+                          borders_innerH=True, borders_outerH=True, borders_innerV=True,
+                          borders_outerV=True, width=800, height=500):
+                
+                # Add columns for User, YYYYMM, Day, and then the dates
+                dpg.add_table_column(label="User", width_fixed=True, init_width_or_weight=150)
+                dpg.add_table_column(label="YYYYMM", width_fixed=True, init_width_or_weight=80)
+                dpg.add_table_column(label="Day", width_fixed=True, init_width_or_weight=100)
+                
+                # Determine max number of columns needed
+                max_dates = max(len(thursday_dates), len(friday_dates)) if (thursday_dates or friday_dates) else 0
+                
+                # Add columns for each date position
+                for i in range(max_dates):
+                    dpg.add_table_column(label=f"{i+1}", width_fixed=True, init_width_or_weight=100)
+                
+                # Add the Thursday row if user plays Thursdays
+                if user.get('play_thursdays') and thursday_dates:
+                    with dpg.table_row():
+                        dpg.add_text(f"{user['first'][0]} {user['last']}")
+                        dpg.add_text(f"{month_record['YYYY']}{month_record['MM']:02d}")
+                        dpg.add_text("Thursday")
+                        
+                        # Add thursday attendance checkboxes
+                        for i, date_str in enumerate(thursday_dates):
+                            if len(date_str) >= 8:
+                                month_day = f"{date_str[4:6]}/{date_str[6:8]}"
+                                checked = attendance_data['thursdays'][i] if i < len(attendance_data['thursdays']) else False
+                                dpg.add_checkbox(tag=f"thursday_{i}_{user_id}_{mytf_id}", 
+                                               default_value=checked,
+                                               label=month_day,
+                                               callback=lambda s, a, idx=i: self._update_attendance_checkboxes(s, a, 'thursday', idx))
+                        
+                        # Fill remaining columns if fridays has more dates
+                        for i in range(len(thursday_dates), max_dates):
+                            dpg.add_text("")
+                
+                # Add the Friday row if user plays Fridays
+                if user.get('play_fridays') and friday_dates:
+                    with dpg.table_row():
+                        dpg.add_text(f"{user['first'][0]} {user['last']}")
+                        dpg.add_text(f"{month_record['YYYY']}{month_record['MM']:02d}")
+                        dpg.add_text("Friday")
+                        
+                        # Add friday attendance checkboxes
+                        for i, date_str in enumerate(friday_dates):
+                            if len(date_str) >= 8:
+                                month_day = f"{date_str[4:6]}/{date_str[6:8]}"
+                                checked = attendance_data['fridays'][i] if i < len(attendance_data['fridays']) else False
+                                dpg.add_checkbox(tag=f"friday_{i}_{user_id}_{mytf_id}", 
+                                               default_value=checked,
+                                               label=month_day,
+                                               callback=lambda s, a, idx=i: self._update_attendance_checkboxes(s, a, 'friday', idx))
+                        
+                        # Fill remaining columns if thursdays has more dates
+                        for i in range(len(friday_dates), max_dates):
+                            dpg.add_text("")
+    
+    def _update_attendance_checkboxes(self, sender: str, data: Any, day_type: str, index: int):
+        """Update the attendance data when checkboxes are changed."""
+        # Get the current checkbox state
+        is_checked = dpg.get_value(sender)
+        
+        # Initialize edit_attendance_data if it doesn't exist or is invalid
+        if not hasattr(self, 'edit_attendance_data') or not isinstance(self.edit_attendance_data, dict):
+            self.edit_attendance_data = {'thursdays': [], 'fridays': []}
+        
+        # Ensure the lists exist and are not None
+        if 'thursdays' not in self.edit_attendance_data or self.edit_attendance_data['thursdays'] is None:
+            self.edit_attendance_data['thursdays'] = []
+        if 'fridays' not in self.edit_attendance_data or self.edit_attendance_data['fridays'] is None:
+            self.edit_attendance_data['fridays'] = []
+        
+        # Validate that index is not None
+        if index is None:
+            return
+        
+        # Update the edit_attendance_data
+        if day_type == 'thursday':
+            # Ensure the list is long enough
+            while len(self.edit_attendance_data['thursdays']) <= index:
+                self.edit_attendance_data['thursdays'].append(False)
+            self.edit_attendance_data['thursdays'][index] = is_checked
+        elif day_type == 'friday':
+            # Ensure the list is long enough
+            while len(self.edit_attendance_data['fridays']) <= index:
+                self.edit_attendance_data['fridays'].append(False)
+            self.edit_attendance_data['fridays'][index] = is_checked
 
 
 def main():

@@ -41,11 +41,21 @@ Tracks actual attendance:
 
 A graphical interface built with DearPyGui providing:
 
-- **CRUD operations** for managing users
+- **CRUD operations** for managing users - trap duplicate user and display 'User exists' message
 - **Attendance display/PDF export** showing player attendance by YYYYMM in a data table
   - Number of tables calculated as `mod(sum(attending players, 4))` for each Thursday and Friday
   - **edit attendance records** by first, last, phone for specific YYYYMMDD
 - **Filtering** attendance records by YYYYMM and play day (Thursday or Friday)
+- **Display & Edit attendance boolean array** for user YYYYMM.
+Example:
+
+|User|YYYYMM|Day|1st|2nd|3rd|4th|
+|----------|:--------:|:------------:|:-----:|:-----:|:-----:|:-----:|
+|B Letson|202602|Thursday|2/06|2/13|2/20|2/27|
+||||x|x|x|x|
+|B Letson|202602|Friday|2/07|2/14|2/21|2/28|
+||||||x|x|
+
 - **Quick attendance updates** for users via phone number or name
   - Prompts to create user record if name or phone not found
 - **Automatic schedule management**
