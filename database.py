@@ -244,18 +244,31 @@ class Database:
         return [dict(row) for row in cursor.fetchall()]
     
     def search_users(self, search_term: str) -> List[Dict[str, Any]]:
-        """Search users by name, phone, or email."""
+        """Search users by name, phone, or email.
+        
+        Searches:
+        - First name alone
+        - Last name alone
+        - Full name (first + last)
+        - Phone number
+        - Email address
+        """
         import re
         
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM User WHERE active = 1 ORDER BY last, first')
         users = [dict(row) for row in cursor.fetchall()]
         
+        if not search_term or not search_term.strip():
+            return users
+        
         try:
             pattern = re.compile(search_term, re.IGNORECASE)
             return [
                 u for u in users 
-                if pattern.search(f"{u['first']} {u['last']}")
+                if pattern.search(u.get('first', '') or '')
+                or pattern.search(u.get('last', '') or '')
+                or pattern.search(f"{u['first']} {u['last']}")
                 or pattern.search(u.get('phone', '') or '')
                 or pattern.search(u.get('email', '') or '')
             ]
@@ -335,14 +348,24 @@ class Database:
     def update_attendance(self, mytf_id: int, user_id: int,
                           thursdays: List[bool], fridays: List[bool]) -> Optional[int]:
         """Update or create attendance record. Returns the attendance ID."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         cursor = self.conn.cursor()
+        
+        logger.debug(f"update_attendance called: mytf_id={mytf_id}, user_id={user_id}")
+        logger.debug(f"Input data - thursdays: {thursdays}, fridays: {fridays}")
+        logger.debug(f"Input types - thursdays: {type(thursdays)}, fridays: {type(fridays)}")
         
         # Check if attendance exists
         cursor.execute('SELECT id FROM Attendance WHERE MYTF_id = ? AND user_id = ?', (mytf_id, user_id))
         existing = cursor.fetchone()
+        logger.debug(f"Existing record: {existing}")
         
         thursdays_str = ','.join(str(int(b)) for b in thursdays) if thursdays else ''
         fridays_str = ','.join(str(int(b)) for b in fridays) if fridays else ''
+        
+        logger.debug(f"String data to save - thursdays_str: '{thursdays_str}', fridays_str: '{fridays_str}'")
         
         if existing:
             cursor.execute('''
@@ -351,6 +374,7 @@ class Database:
                 WHERE MYTF_id = ? AND user_id = ?
             ''', (thursdays_str, fridays_str, mytf_id, user_id))
             result_id = existing['id']
+            logger.debug(f"Updated existing record with id: {result_id}")
         else:
             cursor.execute('''
                 INSERT INTO Attendance (MYTF_id, user_id, thursdays, fridays)
@@ -359,8 +383,11 @@ class Database:
             ''', (mytf_id, user_id, thursdays_str, fridays_str))
             result = cursor.fetchone()
             result_id = result['id'] if result else None
+            logger.debug(f"Inserted new record with id: {result_id}")
         
         self.conn.commit()
+        logger.info(f"Committed attendance update for user_id={user_id}, mytf_id={mytf_id}")
+        logger.debug(f"Returning result_id: {result_id}")
         return result_id
     
     def get_month_by_date(self, month: int, year: int) -> Optional[Dict[str, Any]]:
@@ -405,38 +432,58 @@ class Database:
     def get_attendance_report(self, month: Optional[int] = None, year: Optional[int] = None,
                              play_thursdays: bool = False, play_fridays: bool = False,
                              active_only: bool = True) -> List[Dict[str, Any]]:
-        """Get attendance report for a specific month/year and/or day preference."""
+        """Get attendance report for a specific month/year and/or day preference.
+        
+        Only includes users who have attendance records for the specified month.
+        """
         cursor = self.conn.cursor()
         
+        # First, get or create the month record
+        if month is not None and year is not None:
+            month_record = self.get_or_create_month(month, year)
+            mytf_id = month_record['id']
+            
+            # Get the dates for this month
+            thursdays_str = month_record.get('thursdays', '')
+            fridays_str = month_record.get('fridays', '')
+            thursday_dates = thursdays_str.split(',') if thursdays_str else []
+            friday_dates = fridays_str.split(',') if fridays_str else []
+            num_thursdays = len(thursday_dates)
+            num_fridays = len(friday_dates)
+        else:
+            month_record = None
+            mytf_id = None
+            thursday_dates = []
+            friday_dates = []
+            num_thursdays = 0
+            num_fridays = 0
+        
+        # Build query to get users with their attendance records
+        # Only include users who have attendance records (INNER JOIN)
         query = '''
             SELECT u.id as user_id, u.first, u.last, u.phone, u.email,
-                   m.MM as month, m.YYYY as year, m.thursdays, m.fridays,
+                   u.play_thursdays, u.play_fridays,
                    a.thursdays as attendance_thursdays, a.fridays as attendance_fridays
             FROM User u
             JOIN Attendance a ON u.id = a.user_id
-            JOIN Month_Year_Thursday_Friday m ON a.MYTF_id = m.id
         '''
         
         params = []
         
-        if month is not None and year is not None:
-            query += ' WHERE m.MM = ? AND m.YYYY = ?'
-            params.extend([month, year])
-        elif month is not None:
-            query += ' WHERE m.MM = ?'
-            params.append(month)
-        elif year is not None:
-            query += ' WHERE m.YYYY = ?'
-            params.append(year)
+        # Add month filter if we have a month record
+        if mytf_id is not None:
+            query += ' WHERE a.MYTF_id = ?'
+            params.append(mytf_id)
         
+        # Add active filter
         if active_only:
-            query += ' AND u.active = 1' if len(params) == 0 else ' AND u.active = 1'
+            query += ' AND u.active = 1'
         
         # Add day preference filters
         if play_thursdays and not play_fridays:
-            query += ' WHERE u.play_thursdays = 1' if len(params) == 0 else ' AND u.play_thursdays = 1'
+            query += ' AND u.play_thursdays = 1'
         elif play_fridays and not play_thursdays:
-            query += ' WHERE u.play_fridays = 1' if len(params) == 0 else ' AND u.play_fridays = 1'
+            query += ' AND u.play_fridays = 1'
         
         query += ' ORDER BY u.last, u.first'
         
@@ -446,15 +493,16 @@ class Database:
         for row in cursor.fetchall():
             record = dict(row)
             
-            # Parse thursdays dates
-            thursdays_list = record.get('thursdays', '').split(',') if record.get('thursdays') else []
-            
             # Parse attendance
-            att_thursdays = [bool(int(x)) for x in record.get('attendance_thursdays', '').split(',') if x] if record.get('attendance_thursdays') else []
-            att_fridays = [bool(int(x)) for x in record.get('attendance_fridays', '').split(',') if x] if record.get('attendance_fridays') else []
+            att_thursdays_str = record.get('attendance_thursdays') or ''
+            att_fridays_str = record.get('attendance_fridays') or ''
             
-            record['thursdays_list'] = thursdays_list
-            record['fridays_list'] = record.get('fridays', '').split(',') if record.get('fridays') else []
+            # Parse attendance arrays
+            att_thursdays = [bool(int(x)) for x in att_thursdays_str.split(',') if x] if att_thursdays_str else []
+            att_fridays = [bool(int(x)) for x in att_fridays_str.split(',') if x] if att_fridays_str else []
+            
+            record['thursdays_list'] = thursday_dates
+            record['fridays_list'] = friday_dates
             record['att_thursdays'] = att_thursdays
             record['att_fridays'] = att_fridays
             

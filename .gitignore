@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 screen_shots/
+bridge_app.log
 
 # Virtual environments
 .venv
