@@ -93,6 +93,44 @@ class Database:
         ''')
         
         # Create indexes for better query performance
+        # SQL Reports table - stores custom Python scripts for reporting
+        # Check if old table exists with 'sql' column and migrate if needed
+        cursor.execute("PRAGMA table_info(SQL_Report)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if columns and 'sql' in columns and 'script_path' not in columns:
+            # Migrate from old schema (sql) to new schema (script_path)
+            cursor.execute('''
+                CREATE TABLE SQL_Report_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    script_path TEXT NOT NULL,
+                    parameters TEXT DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                INSERT INTO SQL_Report_new (id, name, description, script_path, parameters, created_at)
+                SELECT id, name, description, 
+                       CASE WHEN sql IS NOT NULL THEN 'migrated_script.py' ELSE 'new_script.py' END,
+                       parameters, created_at
+                FROM SQL_Report
+            ''')
+            cursor.execute('DROP TABLE SQL_Report')
+            cursor.execute('ALTER TABLE SQL_Report_new RENAME TO SQL_Report')
+        else:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS SQL_Report (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    script_path TEXT NOT NULL,
+                    parameters TEXT DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+        
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_active ON User(active)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_play_thursdays ON User(play_thursdays)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_play_fridays ON User(play_fridays)')
@@ -390,6 +428,77 @@ class Database:
         logger.debug(f"Returning result_id: {result_id}")
         return result_id
     
+    def create_attendance_for_all_month_users(self, mytf_id: int, month: int, year: int) -> int:
+        """Create attendance records for all users with all_month=True.
+        
+        Returns the number of attendance records created.
+        """
+        cursor = self.conn.cursor()
+        
+        # Get all active users with all_month=True
+        cursor.execute('''
+            SELECT id, play_thursdays, play_fridays, first, last 
+            FROM User 
+            WHERE active = 1 AND all_month = 1
+        ''')
+        users = cursor.fetchall()
+        
+        # Get month record to count Thursdays and Fridays
+        cursor.execute('SELECT thursdays, fridays FROM Month_Year_Thursday_Friday WHERE id = ?', (mytf_id,))
+        month_record = cursor.fetchone()
+        
+        if not month_record:
+            return 0
+        
+        thursday_dates = month_record['thursdays'].split(',') if month_record['thursdays'] else []
+        friday_dates = month_record['fridays'].split(',') if month_record['fridays'] else []
+        
+        num_thursdays = len(thursday_dates)
+        num_fridays = len(friday_dates)
+        
+        created_count = 0
+        
+        for user in users:
+            user_id = user['id']
+            play_thursdays = user['play_thursdays']
+            play_fridays = user['play_fridays']
+            
+            # Create attendance with all True for days they play
+            if play_thursdays and num_thursdays > 0:
+                thursdays = [True] * num_thursdays
+            else:
+                thursdays = []
+            
+            if play_fridays and num_fridays > 0:
+                fridays = [True] * num_fridays
+            else:
+                fridays = []
+            
+            # Check if attendance already exists
+            cursor.execute('SELECT id FROM Attendance WHERE MYTF_id = ? AND user_id = ?', (mytf_id, user_id))
+            existing = cursor.fetchone()
+            
+            thursdays_str = ','.join(str(int(b)) for b in thursdays)
+            fridays_str = ','.join(str(int(b)) for b in fridays)
+            
+            if existing:
+                # Update existing record with all attending
+                cursor.execute('''
+                    UPDATE Attendance 
+                    SET thursdays = ?, fridays = ?
+                    WHERE MYTF_id = ? AND user_id = ?
+                ''', (thursdays_str, fridays_str, mytf_id, user_id))
+            else:
+                # Create new attendance record
+                cursor.execute('''
+                    INSERT INTO Attendance (MYTF_id, user_id, thursdays, fridays)
+                    VALUES (?, ?, ?, ?)
+                ''', (mytf_id, user_id, thursdays_str, fridays_str))
+                created_count += 1
+        
+        self.conn.commit()
+        return created_count
+    
     def get_month_by_date(self, month: int, year: int) -> Optional[Dict[str, Any]]:
         """Get a month record by MM and YYYY."""
         cursor = self.conn.cursor()
@@ -549,6 +658,153 @@ class Database:
             results.append(record)
         
         return results
+    
+    # SQL Report CRUD methods
+    
+    def get_all_sql_reports(self) -> List[Dict[str, Any]]:
+        """Get all script reports."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id, name, description, script_path, parameters, created_at FROM SQL_Report ORDER BY name')
+        reports = []
+        for row in cursor.fetchall():
+            record = dict(row)
+            import json
+            try:
+                record['parameters'] = json.loads(record['parameters'])
+            except (json.JSONDecodeError, TypeError):
+                record['parameters'] = []
+            reports.append(record)
+        return reports
+    
+    def get_sql_report(self, report_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific script report by ID."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id, name, description, script_path, parameters, created_at FROM SQL_Report WHERE id = ?', (report_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        record = dict(row)
+        import json
+        try:
+            record['parameters'] = json.loads(record['parameters'])
+        except (json.JSONDecodeError, TypeError):
+            record['parameters'] = []
+        return record
+    
+    def create_sql_report(self, name: str, script_path: str, description: str = None, parameters: List[Dict[str, Any]] = None) -> Optional[int]:
+        """Create a new script report. Returns the report ID."""
+        import json
+        import os
+        cursor = self.conn.cursor()
+        
+        if not name or not script_path:
+            raise ValueError("Name and script_path are required")
+        
+        # Validate script path exists
+        if not os.path.exists(script_path):
+            raise ValueError(f"Script file not found: {script_path}")
+        
+        params_str = json.dumps(parameters if parameters else [])
+        
+        try:
+            cursor.execute('''
+                INSERT INTO SQL_Report (name, description, script_path, parameters)
+                VALUES (?, ?, ?, ?)
+                RETURNING id
+            ''', (name, description, script_path, params_str))
+            result = cursor.fetchone()
+            self.conn.commit()
+            return result['id'] if result else None
+        except sqlite3.IntegrityError:
+            raise ValueError(f"A report with name '{name}' already exists")
+    
+    def update_sql_report(self, report_id: int, name: str = None, script_path: str = None, 
+                         description: str = None, parameters: List[Dict[str, Any]] = None) -> bool:
+        """Update an existing script report."""
+        import json
+        import os
+        cursor = self.conn.cursor()
+        
+        # Validate script path if provided
+        if script_path is not None and not os.path.exists(script_path):
+            raise ValueError(f"Script file not found: {script_path}")
+        
+        # Build update fields dynamically
+        fields = []
+        values = []
+        
+        if name is not None:
+            fields.append("name = ?")
+            values.append(name)
+        if script_path is not None:
+            fields.append("script_path = ?")
+            values.append(script_path)
+        if description is not None:
+            fields.append("description = ?")
+            values.append(description)
+        if parameters is not None:
+            fields.append("parameters = ?")
+            values.append(json.dumps(parameters))
+        
+        if not fields:
+            return False
+        
+        values.append(report_id)
+        
+        try:
+            cursor.execute(f'''
+                UPDATE SQL_Report SET {', '.join(fields)}
+                WHERE id = ?
+            ''', values)
+            self.conn.commit()
+            return cursor.rowcount > 0
+        except sqlite3.IntegrityError:
+            raise ValueError(f"A report with name '{name}' already exists")
+    
+    def delete_sql_report(self, report_id: int) -> bool:
+        """Delete a script report."""
+        cursor = self.conn.cursor()
+        cursor.execute('DELETE FROM SQL_Report WHERE id = ?', (report_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+    
+    def execute_sql_report(self, report_id: int, param_values: Dict[str, Any] = None) -> tuple:
+        """Execute a Python script report and return (stdout, stderr, returncode)."""
+        import subprocess
+        import os
+        
+        report = self.get_sql_report(report_id)
+        if not report:
+            raise ValueError(f"Report with ID {report_id} not found")
+        
+        script_path = report['script_path']
+        
+        # Validate script exists
+        if not os.path.exists(script_path):
+            raise ValueError(f"Script file not found: {script_path}")
+        
+        # Build command line arguments from parameters
+        args = [script_path]
+        if param_values:
+            for param in report.get('parameters', []):
+                param_name = param.get('name')
+                if param_name and param_name in param_values:
+                    args.append(str(param_values[param_name]))
+        
+        # Execute the script
+        try:
+            result = subprocess.run(
+                ['python', *args],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            return (result.stdout, result.stderr, result.returncode)
+        except subprocess.TimeoutExpired:
+            return ("", "Script execution timed out after 5 minutes", -1)
+        except Exception as e:
+            return ("", f"Error executing script: {str(e)}", -1)
 
 
 def main():

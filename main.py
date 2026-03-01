@@ -6,6 +6,7 @@ Provides CRUD operations and attendance tracking.
 
 import dearpygui.dearpygui as dpg
 from database import Database
+from sql_reports import SQLReportsManager
 from pathlib import Path
 from datetime import date
 from typing import Optional, List, Dict, Any
@@ -39,6 +40,8 @@ class BridgeApp:
             self.db_path = Path(__file__).parent / "bridge_attendance.db"
         self.db: Optional[Database] = None
         self.app_instance = None
+        self.all_users_sort_column = "last"  # Default sort by last name
+        self.all_users_sort_reverse = False  # Default ascending order
         
     def run(self):
         """Run the DearPyGUI application."""
@@ -78,6 +81,9 @@ class BridgeApp:
                 
                 with dpg.tab(label="Edit Attendance") as self.edit_attendance_tab_id:
                     self._build_edit_attendance_view()
+                
+                with dpg.tab(label="SQL Reports") as self.sql_reports_tab_id:
+                    self._build_sql_reports_view()
         
         dpg.create_viewport(title='Bridge Attendance', width=1200, height=800)
         dpg.setup_dearpygui()
@@ -196,15 +202,17 @@ class BridgeApp:
                     dpg.add_text(user.get('email', 'N/A'))
                     dpg.add_text("Yes" if user.get('active', True) else "No")
                     dpg.add_text("/".join(days))
-                    # Actions column with Edit and Delete buttons
+                    # Actions column with Edit, Duplicate, and Delete buttons
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="Edit", user_data=user['id'], callback=self._on_edit_user_clicked)
+                        dpg.add_button(label="Duplicate", user_data=user['id'], callback=self._on_duplicate_user_clicked)
                         dpg.add_button(label="Delete", user_data=user['id'], callback=self._on_delete_user_clicked)
     
     def _show_add_user_dialog(self):
         """Show dialog to add a new user."""
         with dpg.window(label="Add New User", width=400, pos=(100, 100)) as window_id:
             with dpg.group():
+                # Tab order: first, last, active, thurs, fri, phone, email
                 dpg.add_input_text(tag="new_user_first", label="First Name")
                 dpg.add_input_text(tag="new_user_last", label="Last Name")
                 
@@ -216,17 +224,27 @@ class BridgeApp:
                 dpg.add_input_text(tag="new_user_email", label="Email")
                 
                 dpg.add_spacer(height=10)
+                # Tab order: pref email, pref phone, pref text
                 dpg.add_checkbox(tag="new_user_prefer_email", label="Prefer Email", default_value=False)
                 dpg.add_checkbox(tag="new_user_prefer_phone", label="Prefer Phone", default_value=False)
                 dpg.add_checkbox(tag="new_user_prefer_text", label="Prefer Text", default_value=False)
                 
                 dpg.add_spacer(height=10)
-                dpg.add_checkbox(tag="new_user_all_month", label="All Month", default_value=True)
-                dpg.add_checkbox(tag="new_user_select_days", label="Select Days", default_value=False)
+                # All Month and Select Days as radio buttons
+                dpg.add_radio_button(tag="new_user_month_option", 
+                                    items=["All Month", "Select Days"],
+                                    default_value="All Month",
+                                    callback=self._on_add_month_option_changed)
             
             with dpg.group(horizontal=True):
+                # Tab order: save, cancel
                 dpg.add_button(label="Save", callback=lambda: self._save_new_user(window_id))
                 dpg.add_button(label="Cancel", callback=lambda: dpg.delete_item(window_id))
+    
+    def _on_add_month_option_changed(self, sender, app_data):
+        """Handle change in month option radio button for add dialog."""
+        # The value is already stored in the radio button, nothing additional needed
+        pass
     
     def _save_new_user(self, window_id):
         """Save a new user."""
@@ -240,8 +258,11 @@ class BridgeApp:
         prefer_email = dpg.get_value("new_user_prefer_email")
         prefer_phone = dpg.get_value("new_user_prefer_phone")
         prefer_text = dpg.get_value("new_user_prefer_text")
-        all_month = dpg.get_value("new_user_all_month")
-        select_days = dpg.get_value("new_user_select_days")
+        
+        # Handle radio button for All Month / Select Days
+        month_option = dpg.get_value("new_user_month_option")
+        all_month = (month_option == "All Month")
+        select_days = (month_option == "Select Days")
         
         try:
             user_id = self.db.create_user(
@@ -343,6 +364,222 @@ class BridgeApp:
         # Show the edit dialog with the fresh user data
         self._show_edit_user_dialog(user)
     
+    def _on_duplicate_user_clicked(self, sender, app_data):
+        """Handle duplicate button click - fetch user and show duplicate dialog."""
+        # Get the user_id from the button's user_data
+        user_id = dpg.get_item_user_data(sender)
+        
+        if user_id is None:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text("Error: Could not get user ID from button")
+            return
+        
+        # Fetch fresh user data from database
+        user = self.db.get_user(user_id)
+        
+        if user is None:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text(f"Error: User with ID {user_id} not found in database")
+            return
+        
+        # Show the duplicate dialog with the user's data
+        self._show_duplicate_user_dialog(user)
+    
+    def _show_duplicate_user_dialog(self, user: Dict[str, Any]):
+        """Show dialog to duplicate an existing user with duplicate detection."""
+        # Check if user is None or invalid
+        if user is None:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text("Error: User data is None")
+            return
+        
+        if not isinstance(user, dict):
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text(f"Error: User data is not a dict, it's {type(user)}")
+            return
+        
+        if 'first' not in user or 'last' not in user:
+            with dpg.window(label="Error", width=300, pos=(150, 150)):
+                dpg.add_text(f"Error: User data missing required fields. Keys: {list(user.keys())}")
+            return
+        
+        # Determine default radio button value based on user's current settings
+        if user.get('select_days', False):
+            month_option_default = "Select Days"
+        else:
+            month_option_default = "All Month"
+        
+        with dpg.window(label=f"Duplicate User: {user['first']} {user['last']}", width=500, pos=(100, 100)) as window_id:
+            dpg.add_text("Duplicate Detection: Check for existing users with similar information")
+            dpg.add_spacer(height=10)
+            
+            # Add duplicate check button
+            dpg.add_button(label="Check for Duplicates", 
+                          callback=lambda: self._check_for_duplicates(
+                              window_id,
+                              dpg.get_value("dup_user_first"),
+                              dpg.get_value("dup_user_last"),
+                              dpg.get_value("dup_user_phone")
+                          ),
+                          width=-1)
+            
+            dpg.add_separator()
+            dpg.add_spacer(height=10)
+            
+            with dpg.group():
+                # Tab order: first, last, active, thurs, fri, phone, email
+                dpg.add_input_text(tag="dup_user_first", label="First Name", 
+                                  default_value=user.get('first', ''))
+                dpg.add_input_text(tag="dup_user_last", label="Last Name", 
+                                  default_value=user.get('last', ''))
+                
+                dpg.add_checkbox(tag="dup_user_active", label="Active", 
+                                default_value=bool(user.get('active', True)))
+                dpg.add_checkbox(tag="dup_user_thursdays", label="Plays Thursdays", 
+                                default_value=bool(user.get('play_thursdays', False)))
+                dpg.add_checkbox(tag="dup_user_fridays", label="Plays Fridays", 
+                                default_value=bool(user.get('play_fridays', False)))
+                
+                dpg.add_input_text(tag="dup_user_phone", label="Phone Number", 
+                                  default_value=user.get('phone', '') or '')
+                dpg.add_input_text(tag="dup_user_email", label="Email", 
+                                  default_value=user.get('email', '') or '')
+                
+                dpg.add_spacer(height=10)
+                # Tab order: pref email, pref phone, pref text
+                dpg.add_checkbox(tag="dup_user_prefer_email", label="Prefer Email", 
+                                default_value=bool(user.get('prefer_email', False)))
+                dpg.add_checkbox(tag="dup_user_prefer_phone", label="Prefer Phone", 
+                                default_value=bool(user.get('prefer_phone', False)))
+                dpg.add_checkbox(tag="dup_user_prefer_text", label="Prefer Text", 
+                                default_value=bool(user.get('prefer_text', False)))
+                
+                dpg.add_spacer(height=10)
+                # All Month and Select Days as radio buttons
+                dpg.add_radio_button(tag="dup_user_month_option", 
+                                    items=["All Month", "Select Days"],
+                                    default_value=month_option_default)
+                
+                # Placeholder for duplicate check results
+                dpg.add_spacer(height=10)
+                with dpg.group(tag="dup_check_results", show=False):
+                    dpg.add_separator()
+                    dpg.add_text("Duplicate Check Results:", color=(255, 200, 100))
+            
+            with dpg.group(horizontal=True):
+                # Tab order: save, cancel
+                dpg.add_button(label="Save as New User", 
+                              callback=lambda: self._save_duplicate_user(window_id))
+                dpg.add_button(label="Cancel", callback=lambda: dpg.delete_item(window_id))
+    
+    def _check_for_duplicates(self, parent_window_id, first, last, phone):
+        """Check for existing users that might be duplicates."""
+        if not self.db:
+            return
+        
+        # Clear previous results
+        if dpg.does_item_exist("dup_check_results_group"):
+            dpg.delete_item("dup_check_results_group")
+        
+        with dpg.group(tag="dup_check_results_group", parent="dup_check_results"):
+            dpg.show_item("dup_check_results")
+            
+            found_duplicates = False
+            
+            # Check by name similarity
+            if first or last:
+                all_users = self.db.get_all_users(active_only=False)
+                for user in all_users:
+                    # Check for exact first+last match
+                    name_match = (user.get('first', '').lower() == first.lower() and 
+                                  user.get('last', '').lower() == last.lower())
+                    
+                    # Check for partial matches
+                    partial_match = (first.lower() in user.get('first', '').lower() or 
+                                    last.lower() in user.get('last', '').lower() or
+                                    user.get('first', '').lower() in first.lower() or 
+                                    user.get('last', '').lower() in last.lower())
+                    
+                    if name_match:
+                        found_duplicates = True
+                        dpg.add_text(f"⚠️ EXACT DUPLICATE: {user['first']} {user['last']} (ID: {user['id']})", 
+                                    color=(255, 100, 100))
+                        dpg.add_text(f"   Phone: {user.get('phone', 'N/A')}, Email: {user.get('email', 'N/A')}")
+                    elif partial_match:
+                        found_duplicates = True
+                        dpg.add_text(f"⚠️ SIMILAR NAME: {user['first']} {user['last']} (ID: {user['id']})", 
+                                    color=(255, 200, 100))
+                        dpg.add_text(f"   Phone: {user.get('phone', 'N/A')}, Email: {user.get('email', 'N/A')}")
+            
+            # Check by phone
+            if phone and len(phone) >= 7:
+                phone_user = self.db.get_user_by_phone(phone)
+                if phone_user:
+                    found_duplicates = True
+                    dpg.add_text(f"⚠️ PHONE DUPLICATE: {phone_user['first']} {phone_user['last']} (ID: {phone_user['id']})", 
+                                color=(255, 100, 100))
+                    dpg.add_text(f"   This phone number is already registered.")
+            
+            if not found_duplicates:
+                dpg.add_text("✓ No duplicates found - this appears to be a unique record.", 
+                            color=(100, 255, 100))
+            
+            dpg.add_spacer(height=10)
+    
+    def _save_duplicate_user(self, window_id):
+        """Save the duplicated user as a new record."""
+        first = dpg.get_value("dup_user_first")
+        last = dpg.get_value("dup_user_last")
+        active = dpg.get_value("dup_user_active")
+        play_thursdays = dpg.get_value("dup_user_thursdays")
+        play_fridays = dpg.get_value("dup_user_fridays")
+        phone = dpg.get_value("dup_user_phone") or None
+        email = dpg.get_value("dup_user_email") or None
+        prefer_email = dpg.get_value("dup_user_prefer_email")
+        prefer_phone = dpg.get_value("dup_user_prefer_phone")
+        prefer_text = dpg.get_value("dup_user_prefer_text")
+        
+        # Handle radio button for All Month / Select Days
+        month_option = dpg.get_value("dup_user_month_option")
+        all_month = (month_option == "All Month")
+        select_days = (month_option == "Select Days")
+        
+        try:
+            # Try to create the user - this will fail if it's a true duplicate
+            user_id = self.db.create_user(
+                first=first,
+                last=last,
+                active=active,
+                play_thursdays=play_thursdays,
+                play_fridays=play_fridays,
+                email=email,
+                phone=phone,
+                prefer_email=prefer_email,
+                prefer_phone=prefer_phone,
+                prefer_text=prefer_text,
+                all_month=all_month,
+                select_days=select_days
+            )
+            
+            dpg.delete_item(window_id)
+            self._populate_users_table()
+            with dpg.window(label="Success", width=300, pos=(150, 150)):
+                dpg.add_text(f"User duplicated successfully with ID: {user_id}")
+        except Exception as e:
+            # Show error if it's a duplicate
+            error_msg = str(e)
+            if "UNIQUE constraint failed" in error_msg or "unique index" in error_msg.lower():
+                with dpg.window(label="Duplicate Found", width=400, pos=(150, 150)) as error_window:
+                    dpg.add_text("Cannot save: Duplicate user detected!", color=(255, 100, 100))
+                    dpg.add_spacer(height=10)
+                    dpg.add_text("A user with this First Name, Last Name, and Phone combination already exists.")
+                    dpg.add_spacer(height=10)
+                    dpg.add_text("Please modify the information before saving.")
+                    dpg.add_button(label="OK", callback=lambda: dpg.delete_item(error_window))
+            else:
+                with dpg.window(label="Error", width=300, pos=(150, 150)):
+                    dpg.add_text(f"Error: {error_msg}")
+    
     def _show_edit_user_dialog(self, user: Dict[str, Any]):
         """Show dialog to edit an existing user."""
         # Debug: Check if user is None or invalid
@@ -361,45 +598,68 @@ class BridgeApp:
                 dpg.add_text(f"Error: User data missing required fields. Keys: {list(user.keys())}")
             return
         
+        # Determine default radio button value based on user's current settings
+        if user.get('select_days', False):
+            month_option_default = "Select Days"
+        else:
+            month_option_default = "All Month"
+        
+        # Generate unique tags for this dialog instance
+        dialog_id = f"edit_user_{user['id']}_{id(user)}"
+        
         with dpg.window(label=f"Edit User: {user['first']} {user['last']}", width=400, pos=(100, 100)) as window_id:
             with dpg.group():
-                dpg.add_input_text(tag="edit_user_first", label="First Name", default_value=user.get('first', ''))
-                dpg.add_input_text(tag="edit_user_last", label="Last Name", default_value=user.get('last', ''))
+                # Tab order: first, last, active, thurs, fri, phone, email
+                dpg.add_input_text(tag=f"{dialog_id}_first", label="First Name", default_value=user.get('first', ''))
+                dpg.add_input_text(tag=f"{dialog_id}_last", label="Last Name", default_value=user.get('last', ''))
                 
-                dpg.add_checkbox(tag="edit_user_active", label="Active", default_value=bool(user.get('active', True)))
-                dpg.add_checkbox(tag="edit_user_thursdays", label="Plays Thursdays", default_value=bool(user.get('play_thursdays', False)))
-                dpg.add_checkbox(tag="edit_user_fridays", label="Plays Fridays", default_value=bool(user.get('play_fridays', False)))
+                dpg.add_checkbox(tag=f"{dialog_id}_active", label="Active", default_value=bool(user.get('active', True)))
+                dpg.add_checkbox(tag=f"{dialog_id}_thursdays", label="Plays Thursdays", default_value=bool(user.get('play_thursdays', False)))
+                dpg.add_checkbox(tag=f"{dialog_id}_fridays", label="Plays Fridays", default_value=bool(user.get('play_fridays', False)))
                 
-                dpg.add_input_text(tag="edit_user_phone", label="Phone Number", default_value=user.get('phone', '') or '')
-                dpg.add_input_text(tag="edit_user_email", label="Email", default_value=user.get('email', '') or '')
-                
-                dpg.add_spacer(height=10)
-                dpg.add_checkbox(tag="edit_user_prefer_email", label="Prefer Email", default_value=bool(user.get('prefer_email', False)))
-                dpg.add_checkbox(tag="edit_user_prefer_phone", label="Prefer Phone", default_value=bool(user.get('prefer_phone', False)))
-                dpg.add_checkbox(tag="edit_user_prefer_text", label="Prefer Text", default_value=bool(user.get('prefer_text', False)))
+                dpg.add_input_text(tag=f"{dialog_id}_phone", label="Phone Number", default_value=user.get('phone', '') or '')
+                dpg.add_input_text(tag=f"{dialog_id}_email", label="Email", default_value=user.get('email', '') or '')
                 
                 dpg.add_spacer(height=10)
-                dpg.add_checkbox(tag="edit_user_all_month", label="All Month", default_value=bool(user.get('all_month', True)))
-                dpg.add_checkbox(tag="edit_user_select_days", label="Select Days", default_value=bool(user.get('select_days', False)))
+                # Tab order: pref email, pref phone, pref text
+                dpg.add_checkbox(tag=f"{dialog_id}_prefer_email", label="Prefer Email", default_value=bool(user.get('prefer_email', False)))
+                dpg.add_checkbox(tag=f"{dialog_id}_prefer_phone", label="Prefer Phone", default_value=bool(user.get('prefer_phone', False)))
+                dpg.add_checkbox(tag=f"{dialog_id}_prefer_text", label="Prefer Text", default_value=bool(user.get('prefer_text', False)))
+                
+                dpg.add_spacer(height=10)
+                # All Month and Select Days as radio buttons
+                dpg.add_radio_button(tag=f"{dialog_id}_month_option", 
+                                    items=["All Month", "Select Days"],
+                                    default_value=month_option_default,
+                                    callback=self._on_edit_month_option_changed)
             
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Save", callback=lambda: self._save_edit_user(window_id, user['id']))
+                # Tab order: save, cancel
+                dpg.add_button(label="Save", callback=lambda: self._save_edit_user(window_id, dialog_id, user['id']))
                 dpg.add_button(label="Cancel", callback=lambda: dpg.delete_item(window_id))
     
-    def _save_edit_user(self, window_id, user_id: int):
+    def _on_edit_month_option_changed(self, sender, app_data):
+        """Handle change in month option radio button for edit dialog."""
+        # The value is already stored in the radio button, nothing additional needed
+        pass
+    
+    def _save_edit_user(self, window_id, dialog_id: str, user_id: int):
         """Save changes to an existing user."""
-        first = dpg.get_value("edit_user_first")
-        last = dpg.get_value("edit_user_last")
-        active = dpg.get_value("edit_user_active")
-        play_thursdays = dpg.get_value("edit_user_thursdays")
-        play_fridays = dpg.get_value("edit_user_fridays")
-        phone = dpg.get_value("edit_user_phone") or None
-        email = dpg.get_value("edit_user_email") or None
-        prefer_email = dpg.get_value("edit_user_prefer_email")
-        prefer_phone = dpg.get_value("edit_user_prefer_phone")
-        prefer_text = dpg.get_value("edit_user_prefer_text")
-        all_month = dpg.get_value("edit_user_all_month")
-        select_days = dpg.get_value("edit_user_select_days")
+        first = dpg.get_value(f"{dialog_id}_first")
+        last = dpg.get_value(f"{dialog_id}_last")
+        active = dpg.get_value(f"{dialog_id}_active")
+        play_thursdays = dpg.get_value(f"{dialog_id}_thursdays")
+        play_fridays = dpg.get_value(f"{dialog_id}_fridays")
+        phone = dpg.get_value(f"{dialog_id}_phone") or None
+        email = dpg.get_value(f"{dialog_id}_email") or None
+        prefer_email = dpg.get_value(f"{dialog_id}_prefer_email")
+        prefer_phone = dpg.get_value(f"{dialog_id}_prefer_phone")
+        prefer_text = dpg.get_value(f"{dialog_id}_prefer_text")
+        
+        # Handle radio button for All Month / Select Days
+        month_option = dpg.get_value(f"{dialog_id}_month_option")
+        all_month = (month_option == "All Month")
+        select_days = (month_option == "Select Days")
         
         try:
             success = self.db.update_user(
@@ -444,8 +704,15 @@ class BridgeApp:
                 dpg.add_combo(tag="report_month", items=months, default_value=months[__import__('datetime').date.today().month - 1])
                 dpg.add_combo(tag="report_year", items=[str(y) for y in years], default_value=str(current_year))
                 
+                dpg.add_spacer(height=10)
+                dpg.add_button(label="Load Dates", callback=self._load_available_dates, width=-1)
+                
                 dpg.add_spacer(height=15)
-                dpg.add_text("Filter by Day:")
+                dpg.add_text("Filter by Specific Date:")
+                dpg.add_combo(tag="report_specific_date", items=["All Dates"], default_value="All Dates", width=-1)
+                
+                dpg.add_spacer(height=15)
+                dpg.add_text("Filter by Day Type:")
                 dpg.add_radio_button(tag="report_day_filter", items=["All", "Thursday", "Friday"], 
                                     default_value="All", callback=self._generate_attendance_report)
                 
@@ -471,6 +738,47 @@ class BridgeApp:
                     dpg.add_table_column(label="Thursdays")
                     dpg.add_table_column(label="Fridays")
     
+    def _load_available_dates(self):
+        """Load available dates for the selected month/year into the date dropdown."""
+        month_names = ["January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "October", "November", "December"]
+        month_map = {name: i + 1 for i, name in enumerate(month_names)}
+        
+        selected_month = month_map.get(dpg.get_value("report_month"), __import__('datetime').date.today().month)
+        selected_year = int(dpg.get_value("report_year"))
+        
+        if not self.db:
+            return
+        
+        # Get month record to find all dates
+        month_record = self.db.get_or_create_month(selected_month, selected_year)
+        thursday_dates = month_record.get('thursdays', '').split(',') if month_record.get('thursdays') else []
+        friday_dates = month_record.get('fridays', '').split(',') if month_record.get('fridays') else []
+        
+        # Build date options
+        date_options = ["All Dates"]
+        
+        for date_str in thursday_dates:
+            if len(date_str) >= 8:
+                # Format: YYYYMMDD -> Thu MM/DD
+                month = date_str[4:6]
+                day = date_str[6:8]
+                display = f"Thu {month}/{day}"
+                date_options.append(display)
+        
+        for date_str in friday_dates:
+            if len(date_str) >= 8:
+                # Format: YYYYMMDD -> Fri MM/DD
+                month = date_str[4:6]
+                day = date_str[6:8]
+                display = f"Fri {month}/{day}"
+                date_options.append(display)
+        
+        # Update the dropdown
+        if dpg.does_item_exist("report_specific_date"):
+            dpg.configure_item("report_specific_date", items=date_options)
+            dpg.set_value("report_specific_date", "All Dates")
+    
     def _generate_attendance_report(self):
         """Generate attendance report based on filters."""
         month_names = ["January", "February", "March", "April", "May", "June",
@@ -481,6 +789,7 @@ class BridgeApp:
         selected_year = int(dpg.get_value("report_year"))
         day_filter = dpg.get_value("report_day_filter") if dpg.does_item_exist("report_day_filter") else "All"
         attendance_filter = dpg.get_value("report_attendance_filter") if dpg.does_item_exist("report_attendance_filter") else "All"
+        specific_date = dpg.get_value("report_specific_date") if dpg.does_item_exist("report_specific_date") else "All Dates"
         
         if not self.db:
             return
@@ -497,6 +806,30 @@ class BridgeApp:
             month_record = self.db.get_or_create_month(selected_month, selected_year)
             thursday_dates = month_record.get('thursdays', '').split(',') if month_record.get('thursdays') else []
             friday_dates = month_record.get('fridays', '').split(',') if month_record.get('fridays') else []
+            
+            # Parse specific date filter if selected
+            specific_date_str = None
+            specific_day_type = None
+            if specific_date != "All Dates":
+                # Parse format like "Thu 02/15" or "Fri 02/16"
+                parts = specific_date.split()
+                if len(parts) == 2:
+                    specific_day_type = parts[0]  # "Thu" or "Fri"
+                    date_parts = parts[1].split('/')
+                    if len(date_parts) == 2:
+                        mm, dd = date_parts
+                        # Find the matching date_str in YYYYMMDD format
+                        target_prefix = f"{selected_year}{mm.zfill(2)}{dd.zfill(2)}"
+                        if specific_day_type == "Thu":
+                            for d in thursday_dates:
+                                if d.startswith(target_prefix):
+                                    specific_date_str = d
+                                    break
+                        elif specific_day_type == "Fri":
+                            for d in friday_dates:
+                                if d.startswith(target_prefix):
+                                    specific_date_str = d
+                                    break
             
             # Calculate totals by day and filter records based on attendance
             thursday_totals = {}
@@ -516,33 +849,71 @@ class BridgeApp:
                 fridays_attended = sum(1 for i, present in enumerate(att_fridays) 
                                       if present and i < len(friday_dates)) if record.get('play_fridays') else 0
                 
-                # Apply attendance filter
-                if attendance_filter == "Attending":
-                    # Must have attended at least one day
-                    if day_filter == "All":
-                        if thursdays_attended == 0 and fridays_attended == 0:
-                            continue
-                    elif day_filter == "Thursday":
-                        if thursdays_attended == 0:
-                            continue
-                    elif day_filter == "Friday":
-                        if fridays_attended == 0:
-                            continue
-                elif attendance_filter == "Non-attended":
-                    # Must not have attended any days
-                    if day_filter == "All":
-                        if thursdays_attended > 0 or fridays_attended > 0:
-                            continue
-                    elif day_filter == "Thursday":
-                        if thursdays_attended > 0:
-                            continue
-                    elif day_filter == "Friday":
-                        if fridays_attended > 0:
-                            continue
+                # Apply specific date filter
+                if specific_date_str:
+                    if specific_day_type == "Thu":
+                        # Only check if attended on this specific Thursday
+                        if record.get('play_thursdays'):
+                            try:
+                                date_idx = thursday_dates.index(specific_date_str)
+                                attended_this_date = att_thursdays[date_idx] if date_idx < len(att_thursdays) else False
+                                if attendance_filter == "Attending" and not attended_this_date:
+                                    continue
+                                if attendance_filter == "Non-attended" and attended_this_date:
+                                    continue
+                            except ValueError:
+                                continue  # Date not in user's play days
+                        else:
+                            continue  # User doesn't play Thursdays
+                    elif specific_day_type == "Fri":
+                        # Only check if attended on this specific Friday
+                        if record.get('play_fridays'):
+                            try:
+                                date_idx = friday_dates.index(specific_date_str)
+                                attended_this_date = att_fridays[date_idx] if date_idx < len(att_fridays) else False
+                                if attendance_filter == "Attending" and not attended_this_date:
+                                    continue
+                                if attendance_filter == "Non-attended" and attended_this_date:
+                                    continue
+                            except ValueError:
+                                continue  # Date not in user's play days
+                        else:
+                            continue  # User doesn't play Fridays
+                else:
+                    # Apply attendance filter across all dates
+                    if attendance_filter == "Attending":
+                        # Must have attended at least one day
+                        if day_filter == "All":
+                            if thursdays_attended == 0 and fridays_attended == 0:
+                                continue
+                        elif day_filter == "Thursday":
+                            if thursdays_attended == 0:
+                                continue
+                        elif day_filter == "Friday":
+                            if fridays_attended == 0:
+                                continue
+                    elif attendance_filter == "Non-attended":
+                        # Must not have attended any days
+                        if day_filter == "All":
+                            if thursdays_attended > 0 or fridays_attended > 0:
+                                continue
+                        elif day_filter == "Thursday":
+                            if thursdays_attended > 0:
+                                continue
+                        elif day_filter == "Friday":
+                            if fridays_attended > 0:
+                                continue
                 
                 filtered_report.append(record)
+            
+            # Sort by last name, then first name
+            filtered_report.sort(key=lambda r: (r.get('last', '').lower(), r.get('first', '').lower()))
+            
+            # Process Thursdays for totals
+            for record in filtered_report:
+                att_thursdays = record.get('att_thursdays', [])
+                att_fridays = record.get('att_fridays', [])
                 
-                # Process Thursdays for totals
                 if record.get('play_thursdays'):
                     thursdays_list = record.get('thursdays_list', [])
                     for i, present in enumerate(att_thursdays):
@@ -565,6 +936,12 @@ class BridgeApp:
             # Display totals summary
             dpg.add_text(f"Attendance Report - {month_names[selected_month - 1]} {selected_year}", 
                         color=(100, 200, 255))
+            
+            # Show specific date info if filtered
+            if specific_date != "All Dates":
+                dpg.add_text(f"Filtered by: {specific_date}", color=(255, 200, 100))
+                dpg.add_text(f"Attendance Filter: {attendance_filter}", color=(255, 200, 100))
+            
             dpg.add_spacer(height=10)
             
             if day_filter in ["All", "Thursday"]:
@@ -593,6 +970,15 @@ class BridgeApp:
             # Determine which dates to show based on filter
             show_thursdays = day_filter in ["All", "Thursday"]
             show_fridays = day_filter in ["All", "Friday"]
+            
+            # If specific date is selected, only show that date column
+            if specific_date_str:
+                if specific_day_type == "Thu":
+                    show_thursdays = True
+                    show_fridays = False
+                elif specific_day_type == "Fri":
+                    show_thursdays = False
+                    show_fridays = True
             
             # Calculate total columns needed
             num_thursdays = len(thursday_dates) if show_thursdays else 0
@@ -728,6 +1114,14 @@ class BridgeApp:
         # Get or create the month record
         result = self.db.get_or_create_month(selected_month, selected_year)
         
+        # If this is a newly created month (not duplicate), create attendance for all_month users
+        if not result.get('duplicate', False):
+            month_id = result['id']
+            created_count = self.db.create_attendance_for_all_month_users(month_id, selected_month, selected_year)
+            if created_count > 0:
+                with dpg.window(label="Attendance Created", width=400, pos=(200, 200)):
+                    dpg.add_text(f"Created attendance records for {created_count} 'all month' users")
+        
         # Get existing table or rebuild it
         if dpg.does_item_exist("schedule_table"):
             dpg.delete_item("schedule_table")
@@ -762,7 +1156,7 @@ class BridgeApp:
             for i, date_str in enumerate(fridays):
                 with dpg.table_row():
                     dpg.add_text(f"Friday {i+1}")
-                    # Format: YYYYMMDD -> MM/DD/YYYY
+                    # Format: YYYYMMDD -> MM/YYYY
                     if len(date_str) >= 8:
                         year = date_str[:4]
                         month = date_str[4:6]
@@ -816,19 +1210,36 @@ class BridgeApp:
                                   width=-1)
             
             with dpg.group():
-                with dpg.table(tag="all_users_table", header_row=True, policy=dpg.mvTable_SizingFixedFit,
+                # Table without header_row=True since we'll add headers as clickable rows
+                with dpg.table(tag="all_users_table", header_row=False, policy=dpg.mvTable_SizingFixedFit,
                               scrollX=True, scrollY=True, row_background=True,
                               borders_innerH=True, borders_outerH=True, borders_innerV=True,
                               borders_outerV=True):
-                    dpg.add_table_column(label="ID")
-                    dpg.add_table_column(label="Name")
-                    dpg.add_table_column(label="Phone")
-                    dpg.add_table_column(label="Email")
-                    dpg.add_table_column(label="Active")
-                    dpg.add_table_column(label="Days")
-                    dpg.add_table_column(label="Contact Pref")
+                    # Add columns with user data keys for sorting
+                    dpg.add_table_column(label="ID", width_fixed=True, init_width_or_weight=60)
+                    dpg.add_table_column(label="Last Name", width_fixed=True, init_width_or_weight=120)
+                    dpg.add_table_column(label="First Name", width_fixed=True, init_width_or_weight=120)
+                    dpg.add_table_column(label="Phone", width_fixed=True, init_width_or_weight=120)
+                    dpg.add_table_column(label="Email", width_fixed=True, init_width_or_weight=180)
+                    dpg.add_table_column(label="Active", width_fixed=True, init_width_or_weight=60)
+                    dpg.add_table_column(label="Days", width_fixed=True, init_width_or_weight=80)
+                    dpg.add_table_column(label="Contact Pref", width_fixed=True, init_width_or_weight=100)
                 
                 self._populate_all_users_table()
+    
+    def _on_all_users_header_clicked(self, sender, app_data, user_data):
+        """Handle click on column header to sort."""
+        column = user_data
+        
+        # Toggle sort direction if clicking same column
+        if self.all_users_sort_column == column:
+            self.all_users_sort_reverse = not self.all_users_sort_reverse
+        else:
+            self.all_users_sort_column = column
+            self.all_users_sort_reverse = False
+        
+        # Re-populate the table with new sort
+        self._generate_all_users_report()
     
     def _generate_all_users_report(self):
         """Generate all users report based on filters."""
@@ -858,27 +1269,44 @@ class BridgeApp:
         if dpg.does_item_exist("all_users_table"):
             dpg.delete_item("all_users_table")
         
-        with dpg.table(tag="all_users_table", parent=self.all_users_tab_id, header_row=True, policy=dpg.mvTable_SizingFixedFit,
+        # Define column headers and their sort keys
+        columns = [
+            ("ID", "id"),
+            ("Last Name", "last"),
+            ("First Name", "first"),
+            ("Phone", "phone"),
+            ("Email", "email"),
+            ("Active", "active"),
+            ("Days", "days"),
+            ("Contact Pref", "contact_pref")
+        ]
+        
+        with dpg.table(tag="all_users_table", parent=self.all_users_tab_id, header_row=False, policy=dpg.mvTable_SizingFixedFit,
                       scrollX=True, scrollY=True, row_background=True,
                       borders_innerH=True, borders_outerH=True, borders_innerV=True,
                       borders_outerV=True):
-            dpg.add_table_column(label="ID")
-            dpg.add_table_column(label="Name")
-            dpg.add_table_column(label="Phone")
-            dpg.add_table_column(label="Email")
-            dpg.add_table_column(label="Active")
-            dpg.add_table_column(label="Days")
-            dpg.add_table_column(label="Contact Pref")
+            dpg.add_table_column(label="ID", width_fixed=True, init_width_or_weight=60)
+            dpg.add_table_column(label="Last Name", width_fixed=True, init_width_or_weight=120)
+            dpg.add_table_column(label="First Name", width_fixed=True, init_width_or_weight=120)
+            dpg.add_table_column(label="Phone", width_fixed=True, init_width_or_weight=120)
+            dpg.add_table_column(label="Email", width_fixed=True, init_width_or_weight=180)
+            dpg.add_table_column(label="Active", width_fixed=True, init_width_or_weight=60)
+            dpg.add_table_column(label="Days", width_fixed=True, init_width_or_weight=80)
+            dpg.add_table_column(label="Contact Pref", width_fixed=True, init_width_or_weight=100)
             
-            # Add header row
+            # Add clickable header row
             with dpg.table_row():
-                dpg.add_text("ID")
-                dpg.add_text("Name")
-                dpg.add_text("Phone")
-                dpg.add_text("Email")
-                dpg.add_text("Active")
-                dpg.add_text("Days")
-                dpg.add_text("Contact Pref")
+                for header_text, sort_key in columns:
+                    # Add sort indicator
+                    if self.all_users_sort_column == sort_key:
+                        indicator = " ▼" if self.all_users_sort_reverse else " ▲"
+                    else:
+                        indicator = ""
+                    
+                    dpg.add_button(label=f"{header_text}{indicator}", 
+                                  callback=self._on_all_users_header_clicked,
+                                  user_data=sort_key,
+                                  width=-1)
             
             users = self.db.get_all_users(active_only=active_only)
             
@@ -888,6 +1316,8 @@ class BridgeApp:
             if play_fridays is not None:
                 users = [u for u in users if u.get('play_fridays') == play_fridays]
             
+            # Prepare users with computed fields for sorting
+            users_with_data = []
             for user in users:
                 days = []
                 if user.get('play_thursdays'):
@@ -903,14 +1333,40 @@ class BridgeApp:
                 elif user.get('prefer_text'):
                     contact_pref.append("Text")
                 
+                user['days'] = "/".join(days)
+                user['contact_pref'] = ", ".join(contact_pref) if contact_pref else "None"
+                users_with_data.append(user)
+            
+            # Sort users based on current sort settings
+            sort_column = self.all_users_sort_column
+            reverse = self.all_users_sort_reverse
+            
+            try:
+                if sort_column in ['id', 'last', 'first', 'phone', 'email']:
+                    # String/numeric sorts
+                    users_with_data.sort(key=lambda u: str(u.get(sort_column, "")).lower(), reverse=reverse)
+                elif sort_column == 'active':
+                    # Boolean sort (Yes/No)
+                    users_with_data.sort(key=lambda u: bool(u.get('active', True)), reverse=reverse)
+                elif sort_column == 'days':
+                    # Days string sort
+                    users_with_data.sort(key=lambda u: u.get('days', ""), reverse=reverse)
+                elif sort_column == 'contact_pref':
+                    # Contact preference sort
+                    users_with_data.sort(key=lambda u: u.get('contact_pref', ""), reverse=reverse)
+            except Exception as e:
+                logger.error(f"Error sorting users: {e}")
+            
+            for user in users_with_data:
                 with dpg.table_row():
                     dpg.add_text(str(user['id']))
-                    dpg.add_text(f"{user.get('first', '')} {user.get('last', '')}")
-                    dpg.add_text(user.get('phone', 'N/A'))
-                    dpg.add_text(user.get('email', 'N/A'))
+                    dpg.add_text(user.get('last', '') or "")
+                    dpg.add_text(user.get('first', '') or "")
+                    dpg.add_text(user.get('phone', 'N/A') or "N/A")
+                    dpg.add_text(user.get('email', 'N/A') or "N/A")
                     dpg.add_text("Yes" if user.get('active', True) else "No")
-                    dpg.add_text("/".join(days))
-                    dpg.add_text(", ".join(contact_pref) if contact_pref else "None")
+                    dpg.add_text(user.get('days', ''))
+                    dpg.add_text(user.get('contact_pref', 'None'))
     
     def _export_all_users_pdf(self):
         """Export all users report to PDF."""
@@ -1805,6 +2261,14 @@ class BridgeApp:
                     user_text = f"{user['first']} {user['last']} ({user.get('phone', 'N/A')})"
                     dpg.set_value("edit_attendance_user_select", user_text)
                     break
+
+    # SQL Reports functionality - delegated to SQLReportsManager
+    def _build_sql_reports_view(self):
+        """Build the SQL Reports view using SQLReportsManager."""
+        if not hasattr(self, '_sql_reports_manager'):
+            # Pass the app instance so manager can access db after it's connected
+            self._sql_reports_manager = SQLReportsManager(self, self.sql_reports_tab_id)
+        self._sql_reports_manager.build_view()
 
 
 def main():
