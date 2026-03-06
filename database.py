@@ -4,6 +4,7 @@ Uses SQLite3 for data storage.
 """
 
 import sqlite3
+import sys
 from datetime import date, timedelta
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -773,6 +774,9 @@ class Database:
         """Execute a Python script report and return (stdout, stderr, returncode)."""
         import subprocess
         import os
+        import logging
+        
+        logger = logging.getLogger(__name__)
         
         report = self.get_sql_report(report_id)
         if not report:

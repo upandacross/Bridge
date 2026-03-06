@@ -49,10 +49,71 @@ class SQLReportsManager:
                     dpg.add_table_column(label="Description")
                     dpg.add_table_column(label="Script Path")
                     dpg.add_table_column(label="Parameters")
+                    dpg.add_table_column(label="Help")
                     dpg.add_table_column(label="Execute")
                     dpg.add_table_column(label="CRUD")
                 
                 self._populate_table()
+    
+    def _get_script_help(self, script_path: str) -> str:
+        """Get the usage information from a script."""
+        import subprocess
+        import os
+        
+        if not os.path.exists(script_path):
+            return f"Error: Script file not found: {script_path}"
+        
+        # Try to get help from docstring first
+        try:
+            with open(script_path, 'r') as f:
+                content = f.read()
+                # Look for docstring at the start of the file
+                if '"""' in content:
+                    start = content.find('"""')
+                    end = content.find('"""', start + 3)
+                    if end > start:
+                        docstring = content[start+3:end].strip()
+                        if docstring:
+                            return f"Script Documentation:\n\n{docstring}"
+        except Exception:
+            pass
+        
+        # Try running script with --help first
+        try:
+            result = subprocess.run(
+                ['python', script_path, '--help'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            # If --help produced output and exit code is 0, use it
+            if result.returncode == 0 and (result.stdout or result.stderr):
+                help_output = result.stdout if result.stdout else result.stderr
+                return help_output
+        except Exception:
+            pass
+        
+        # Try running script with no arguments to get usage
+        try:
+            result = subprocess.run(
+                ['python', script_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            # Combine stdout and stderr
+            help_output = result.stdout if result.stdout else ""
+            if result.stderr:
+                help_output += "\n" + result.stderr if help_output else result.stderr
+            
+            if help_output.strip():
+                return help_output
+        except subprocess.TimeoutExpired:
+            return "Error: Script execution timed out"
+        except Exception as e:
+            return f"Error getting help: {str(e)}"
+        
+        return "(No usage information available for this script)"
     
     def _populate_table(self):
         """Populate the script reports table."""
@@ -86,6 +147,7 @@ class SQLReportsManager:
             dpg.add_table_column(label="Description")
             dpg.add_table_column(label="Script Path")
             dpg.add_table_column(label="Parameters")
+            dpg.add_table_column(label="Help")
             dpg.add_table_column(label="Execute")
             dpg.add_table_column(label="CRUD")
             
@@ -96,6 +158,7 @@ class SQLReportsManager:
                 dpg.add_text("Description")
                 dpg.add_text("Script Path")
                 dpg.add_text("Parameters")
+                dpg.add_text("Help")
                 dpg.add_text("Execute")
                 dpg.add_text("CRUD")
             
@@ -114,6 +177,7 @@ class SQLReportsManager:
                     dpg.add_text("")
                     dpg.add_text("")
                     dpg.add_text("")
+                    dpg.add_text("")
             
             if error_occurred:
                 return
@@ -124,6 +188,7 @@ class SQLReportsManager:
                     dpg.add_text("-")
                     dpg.add_text("No reports found")
                     dpg.add_text("Click 'Create New Report' to add one")
+                    dpg.add_text("")
                     dpg.add_text("")
                     dpg.add_text("")
                     dpg.add_text("")
@@ -145,6 +210,11 @@ class SQLReportsManager:
                     dpg.add_text(display_path)
                     dpg.add_text(param_text)
                     
+                    # Help button column
+                    with dpg.group(horizontal=True):
+                        dpg.add_button(label="View Help", user_data=report['id'],
+                                      callback=self._on_help_clicked)
+                    
                     # Execute button column
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="Execute", user_data=report['id'], 
@@ -154,6 +224,40 @@ class SQLReportsManager:
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="CRUD", user_data=report['id'],
                                       callback=self._on_crud_clicked)
+    
+    def _on_help_clicked(self, sender, app_data):
+        """Handle help button click for script report."""
+        report_id = dpg.get_item_user_data(sender)
+        
+        if report_id is None:
+            self._show_error("Could not get report ID from button")
+            return
+        
+        report = self.db.get_sql_report(report_id)
+        
+        if report is None:
+            self._show_error(f"Report with ID {report_id} not found")
+            return
+        
+        # Get the help output
+        help_output = self._get_script_help(report.get('script_path', ''))
+        
+        # Show help dialog
+        with dpg.window(label=f"Help - {report['name']}", width=700, height=500, pos=(100, 100)) as window_id:
+            dpg.add_text(f"Script: {report['name']}")
+            dpg.add_text(f"Path: {report.get('script_path', 'N/A')}", color=(150, 150, 150))
+            dpg.add_spacer(height=10)
+            
+            dpg.add_text("Usage Information (--help output):")
+            dpg.add_spacer(height=5)
+            
+            # Display help in a scrollable text area
+            dpg.add_input_text(multiline=True, readonly=True,
+                              default_value=help_output,
+                              height=350, width=-1)
+            
+            dpg.add_spacer(height=10)
+            dpg.add_button(label="Close", callback=lambda: dpg.delete_item(window_id), width=-1)
     
     def _on_execute_clicked(self, sender, app_data):
         """Handle execute button click for script report."""
@@ -215,12 +319,19 @@ class SQLReportsManager:
     def _execute_report(self, report_id: int, param_values: Dict[str, Any]):
         """Execute Python script and show results."""
         try:
+            # Debug: Log what we're executing
+            logger.debug(f"Executing report {report_id} with params: {param_values}")
+            
             stdout, stderr, returncode = self.db.execute_sql_report(report_id, param_values)
+            
+            # Debug: Log the results
+            logger.debug(f"Execution results - stdout: {stdout[:200]}, stderr: {stderr[:200]}, returncode: {returncode}")
             
             report = self.db.get_sql_report(report_id)
             self._show_execution_results_window(report['name'], stdout, stderr, returncode, report.get('script_path', ''))
             
         except Exception as e:
+            logger.error(f"Error executing script: {e}")
             self._show_error(f"Error executing script: {str(e)}", width=400)
     
     def _show_execution_results_window(self, report_name: str, stdout: str, stderr: str, returncode: int, script_path: str):

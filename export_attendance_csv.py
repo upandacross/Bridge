@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
 """
 Export attendance CSV from bridge_attendance.db
-Usage: python export_attendance_csv.py DD/MM/YYYY [output.csv]
-Example: python export_attendance_csv.py 15/02/2024 attendance_export.csv
+
+This script exports attendance data for a specific game date (Thursday or Friday).
+
+Usage: python export_attendance_csv.py [DD/MM[/YYYY]] [output.csv]
+
+Parameters:
+  DD/MM/YYYY - Date to export attendance for. Must be a Thursday or Friday 
+               that exists in the database schedule. 
+               Defaults to current month/year if not specified.
+               Examples: 05/02/2026, 20/02 (uses current year)
+  
+  output.csv   - Optional output filename. Defaults to attendance_DDMMYYYY.csv
+
+Examples:
+  python export_attendance_csv.py 15/02/2024
+  python export_attendance_csv.py 20/02/2026 my_export.csv
+  python export_attendance_csv.py 20/02           (uses current year)
+  python export_attendance_csv.py                 (uses today's date)
 """
 
 import sqlite3
@@ -12,14 +28,41 @@ from datetime import datetime
 from pathlib import Path
 
 
-def parse_date(date_str: str) -> tuple:
-    """Parse DD/MM/YYYY format."""
+def parse_date(date_str: str = None) -> tuple:
+    """
+    Parse date string in various formats.
+    
+    Supports:
+    - DD/MM/YYYY (full date)
+    - DD/MM (uses current year)
+    - None/empty (uses today's date)
+    
+    Returns: (day, month, year)
+    """
+    from datetime import date as date_module
+    
+    if not date_str:
+        # Use today's date
+        today = date_module.today()
+        return today.day, today.month, today.year
+    
+    # Try DD/MM/YYYY format first
     try:
         dt = datetime.strptime(date_str, "%d/%m/%Y")
         return dt.day, dt.month, dt.year
     except ValueError:
-        print(f"Error: Invalid date format '{date_str}'. Use DD/MM/YYYY")
-        sys.exit(1)
+        pass
+    
+    # Try DD/MM format (use current year)
+    try:
+        dt = datetime.strptime(date_str, "%d/%m")
+        current_year = date_module.today().year
+        return dt.day, dt.month, current_year
+    except ValueError:
+        pass
+    
+    print(f"Error: Invalid date format '{date_str}'. Use DD/MM/YYYY or DD/MM")
+    sys.exit(1)
 
 
 def get_contact_preference(user: dict) -> str:
@@ -77,16 +120,15 @@ def get_attendance_for_date(db: sqlite3.Connection, target_day: int, target_mont
     if position < 0:
         return []
     
-    # Get all active users who play on this day
+    # Get all active users who play on this day (LEFT JOIN to include users without attendance records)
     day_filter = 'play_thursdays' if is_thursday else 'play_fridays'
     cursor.execute(f"""
         SELECT u.id, u.first, u.last, u.phone, u.email,
                u.prefer_email, u.prefer_text, u.prefer_phone,
                a.thursdays as att_thursdays, a.fridays as att_fridays
         FROM User u
-        JOIN Attendance a ON u.id = a.user_id
+        LEFT JOIN Attendance a ON u.id = a.user_id AND a.MYTF_id = ?
         WHERE u.active = 1 
-          AND a.MYTF_id = ?
           AND u.{day_filter} = 1
         ORDER BY u.last COLLATE NOCASE, u.first COLLATE NOCASE
     """, (mytf_id,))
@@ -96,12 +138,24 @@ def get_attendance_for_date(db: sqlite3.Connection, target_day: int, target_mont
         user = dict(row)
         
         # Check attendance for this specific date
+        # Handle case where user has no attendance record (NULL)
+        att_thursdays = user.get('att_thursdays') or ''
+        att_fridays = user.get('att_fridays') or ''
+        
         if is_thursday:
-            att_list = user['att_thursdays'].split(',') if user['att_thursdays'] else []
-            attended = position < len(att_list) and att_list[position] == '1'
+            att_list = att_thursdays.split(',') if att_thursdays else []
+            if att_list:
+                attended = position < len(att_list) and att_list[position] == '1'
+                attendance_status = 'Present' if attended else 'Absent'
+            else:
+                attendance_status = 'Unknown'
         else:
-            att_list = user['att_fridays'].split(',') if user['att_fridays'] else []
-            attended = position < len(att_list) and att_list[position] == '1'
+            att_list = att_fridays.split(',') if att_fridays else []
+            if att_list:
+                attended = position < len(att_list) and att_list[position] == '1'
+                attendance_status = 'Present' if attended else 'Absent'
+            else:
+                attendance_status = 'Unknown'
         
         results.append({
             'name': f"{user['last']}, {user['first']}",
@@ -109,7 +163,7 @@ def get_attendance_for_date(db: sqlite3.Connection, target_day: int, target_mont
             'email': user['email'] or '',
             'preference': get_contact_preference(user),
             'date': f"{target_day:02d}/{target_month:02d}/{target_year}",
-            'attendance': 'Present' if attended else 'Absent',
+            'attendance': attendance_status,
             'day_type': day_type
         })
     
@@ -149,16 +203,25 @@ def export_to_csv(records: list, output_file: str):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python export_attendance_csv.py DD/MM/YYYY [output.csv]")
-        print("Example: python export_attendance_csv.py 15/02/2024 attendance_export.csv")
-        sys.exit(1)
+    # Determine if first argument is a date or output file
+    date_str = None
+    output_file = None
     
-    date_str = sys.argv[1]
-    output_file = sys.argv[2] if len(sys.argv) > 2 else f"attendance_{date_str.replace('/', '')}.csv"
+    if len(sys.argv) >= 2:
+        # Check if first argument looks like a date (contains /)
+        if '/' in sys.argv[1]:
+            date_str = sys.argv[1]
+            output_file = sys.argv[2] if len(sys.argv) > 2 else None
+        else:
+            # First arg is output file, use today's date
+            output_file = sys.argv[1]
     
-    # Parse date
+    # Parse date (will use today if not provided)
     target_day, target_month, target_year = parse_date(date_str)
+    
+    # Generate default output filename if not provided
+    if not output_file:
+        output_file = f"attendance_{target_day:02d}{target_month:02d}{target_year:04d}.csv"
     
     # Connect to database
     db_path = Path(__file__).parent / "bridge_attendance.db"
