@@ -120,10 +120,32 @@ class PlayerCardGenerator:
         
         print(f"\n✓ Exported to {filename}")
     
-    def export_html(self, filename: str = "player_cards.html", cards_per_page: int = 4):
-        """Export player cards to HTML format - compact matrix for 8.5x11 printing."""
-        # Calculate grid dimensions
-        cols = 2 if cards_per_page >= 4 else 1
+    def export_pdf(self, filename: str = "player_cards.pdf", cards_per_page: int = 4):
+        """Export player cards to PDF format (letter size 8.5x11)."""
+        try:
+            from weasyprint import HTML, CSS
+        except ImportError:
+            print("Error: weasyprint not installed. Install with: pip install weasyprint")
+            print("Falling back to HTML export...")
+            self.export_html(filename.replace('.pdf', '.html'), cards_per_page)
+            return
+        
+        # Generate HTML content
+        html_content = self._generate_html_content(cards_per_page)
+        
+        # Convert to PDF using weasyprint
+        HTML(string='\n'.join(html_content)).write_pdf(filename)
+        print(f"✓ Exported to {filename}")
+    
+    def _generate_html_content(self, cards_per_page: int = 4) -> list:
+        """Generate HTML content for player cards."""
+        # Calculate grid dimensions - use 3 columns for more cards per page
+        if cards_per_page <= 2:
+            cols = 1
+        elif cards_per_page <= 6:
+            cols = 2
+        else:
+            cols = 3
         rows = (cards_per_page + cols - 1) // cols
         
         html_content = []
@@ -133,6 +155,12 @@ class PlayerCardGenerator:
         html_content.append("<meta charset='UTF-8'>")
         html_content.append("<title>Bridge Player Cards</title>")
         html_content.append("<style>")
+        # Adjust gap and padding based on cards per page
+        gap = "0.08in" if cards_per_page >= 8 else "0.15in"
+        card_padding = "0.08in" if cards_per_page >= 8 else "0.15in"
+        header_margin = "0.05in" if cards_per_page >= 8 else "0.1in"
+        subheader_margin = "0.04in" if cards_per_page >= 8 else "0.08in"
+        
         html_content.append(f"""
 @page {{
     size: 8.5in 11in;
@@ -148,51 +176,51 @@ body {{
     background-color: white;
 }}
 .page {{
-    width: 7.5in;  /* 8.5 - 0.5 - 0.5 */
-    height: 10in;  /* 11 - 0.5 - 0.5 */
+    width: 100%;
+    height: 100%;
     padding: 0;
     page-break-after: always;
     page-break-inside: avoid;
     display: grid;
     grid-template-columns: repeat({cols}, 1fr);
     grid-template-rows: repeat({rows}, 1fr);
-    gap: 0.15in;
+    gap: {gap};
 }}
 .page:last-child {{
-    page-break-after: auto;
+    page-break-after: avoid;
 }}
 .card {{
     border: 2px solid #333;
-    padding: 0.15in;
+    padding: {card_padding};
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-size: 10pt;
+    font-size: 9pt;
 }}
 .card-header {{
-    font-size: 14pt;
+    font-size: 12pt;
     font-weight: bold;
     text-align: center;
-    margin-bottom: 0.1in;
+    margin-bottom: {header_margin};
     border-bottom: 1px solid #333;
-    padding-bottom: 0.05in;
+    padding-bottom: 0.03in;
 }}
 .card-subheader {{
-    font-size: 11pt;
+    font-size: 10pt;
     font-weight: bold;
     text-align: center;
-    margin-bottom: 0.08in;
+    margin-bottom: {subheader_margin};
 }}
 .card-table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 9pt;
+    font-size: 10pt;
     flex-grow: 1;
 }}
 .card-table th,
 .card-table td {{
     border: 1px solid #666;
-    padding: 0.04in 0.06in;
+    padding: 0.04in 0.05in;
     text-align: center;
 }}
 .card-table th {{
@@ -201,13 +229,6 @@ body {{
 }}
 .card-table tr:nth-child(even) {{
     background-color: #f5f5f5;
-}}
-.sitting-out {{
-    color: #c00;
-    font-style: italic;
-    font-size: 8pt;
-    text-align: center;
-    margin-top: 0.05in;
 }}
         """)
         html_content.append("</style>")
@@ -230,6 +251,8 @@ body {{
         players_per_page = cards_per_page
         num_pages = (self.num_players + players_per_page - 1) // players_per_page
         
+        sitting_out = {}  # No one sits out
+        
         for page in range(num_pages):
             html_content.append("<div class='page'>")
             start_idx = page * players_per_page
@@ -239,7 +262,7 @@ body {{
             for player_num in page_players:
                 games = self.player_games.get(player_num, [])
                 
-                # Format player name - always show "Player #N" for numbered players
+                # Format player name
                 is_numbered = self.name_map.get(player_num) == str(player_num)
                 if is_numbered:
                     player_display = f"Player #{player_num}"
@@ -257,7 +280,6 @@ body {{
                 html_content.append(f"<div class='card-header'>{player_display}</div>")
                 html_content.append(f"<div class='card-subheader'>Table {game1_table}</div>")
                 
-                sitting_out = {}  # No one sits out
                 card = compute_player_card(player_num, self.player_games, sitting_out)
                 
                 if card['games']:
@@ -265,7 +287,6 @@ body {{
                     html_content.append("<tr><th>Game</th><th>Table</th><th>Partner</th></tr>")
                     for game in card['games']:
                         partner_num = game['partner']
-                        # Format partner name - show "Player #N" for numbered players
                         is_partner_numbered = self.name_map.get(partner_num) == str(partner_num)
                         if is_partner_numbered:
                             partner_display = f"Player #{partner_num}"
@@ -284,6 +305,12 @@ body {{
         
         html_content.append("</body>")
         html_content.append("</html>")
+        
+        return html_content
+    
+    def export_html(self, filename: str = "player_cards.html", cards_per_page: int = 4):
+        """Export player cards to HTML format - compact matrix for 8.5x11 printing."""
+        html_content = self._generate_html_content(cards_per_page)
         
         with open(filename, 'w') as f:
             f.write('\n'.join(html_content))
@@ -363,6 +390,12 @@ def main():
         help="HTML output filename (default: player_cards.html)"
     )
     parser.add_argument(
+        "--output-pdf",
+        type=str,
+        default=None,
+        help="PDF output filename (requires weasyprint: pip install weasyprint)"
+    )
+    parser.add_argument(
         "--no-console",
         action="store_true",
         help="Skip console output (only export files)"
@@ -371,7 +404,7 @@ def main():
         "--cards-per-page",
         type=int,
         default=4,
-        choices=[1, 2, 4, 6, 9],
+        choices=[1, 2, 3, 4, 6, 8, 9, 12, 15],
         help="Number of player cards per printed page (default: 4)"
     )
     
@@ -406,6 +439,10 @@ def main():
     # Export to files
     generator.export_csv(args.output_csv)
     generator.export_html(args.output_html, cards_per_page=args.cards_per_page)
+    
+    # Export to PDF if requested
+    if args.output_pdf:
+        generator.export_pdf(args.output_pdf, cards_per_page=args.cards_per_page)
     
     print("\n✓ Player card generation complete!")
 
