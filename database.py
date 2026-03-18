@@ -1,6 +1,11 @@
 """
 Database module for Bridge Attendance Application.
-Uses SQLite3 for data storage.
+Uses SQLite3 for data storage with new normalized schema.
+
+New Schema:
+- Users: Stores player information
+- Games: Stores game dates (Thursday/Friday)
+- Attendance: Links users to games with attendance status
 """
 
 import sqlite3
@@ -13,8 +18,12 @@ from pathlib import Path
 class Database:
     """SQLite database manager for the bridge attendance application."""
     
-    def __init__(self, db_path: str = "bridge_attendance.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        if db_path is not None:
+            self.db_path = db_path
+        else:
+            # Use bridge.db with the new normalized schema
+            self.db_path = "bridge.db"
         self.conn: Optional[sqlite3.Connection] = None
         
     def connect(self) -> sqlite3.Connection:
@@ -37,26 +46,10 @@ class Database:
         """Create all required tables if they don't exist."""
         cursor = self.conn.cursor()
         
-        # Month_Year_Thursday_Friday table - stores schedule for each month
+        # Users table - stores player information and preferences
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS Month_Year_Thursday_Friday (
+            CREATE TABLE IF NOT EXISTS Users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                MM NUMERIC NOT NULL,
-                YYYY NUMERIC NOT NULL,
-                thursdays TEXT DEFAULT '',
-                fridays TEXT DEFAULT '',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(MM, YYYY)
-            )
-        ''')
-        
-        # User table - stores player information and preferences
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS User (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                active BOOLEAN DEFAULT 1 NOT NULL,
-                play_thursdays BOOLEAN DEFAULT 0 NOT NULL,
-                play_fridays BOOLEAN DEFAULT 0 NOT NULL,
                 first TEXT NOT NULL,
                 last TEXT NOT NULL,
                 email TEXT,
@@ -64,84 +57,65 @@ class Database:
                 prefer_email BOOLEAN DEFAULT 0,
                 prefer_phone BOOLEAN DEFAULT 0,
                 prefer_text BOOLEAN DEFAULT 0,
-                all_month BOOLEAN DEFAULT 1,
-                select_days BOOLEAN DEFAULT 0,
-                will_come BOOLEAN DEFAULT 0,
-                will_leave BOOLEAN DEFAULT 0,
+                active BOOLEAN DEFAULT 1,
+                play_thursdays BOOLEAN DEFAULT 0,
+                play_fridays BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
-        # Create unique index for first, last, phone combination to enforce uniqueness
+        # Games table - one row per game date (Thursday or Friday)
         cursor.execute('''
-            CREATE UNIQUE INDEX IF NOT EXISTS first_last_phone_idx 
-            ON User(first, last, phone)
+            CREATE TABLE IF NOT EXISTS Games (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_date TEXT NOT NULL UNIQUE,
+                day_type TEXT NOT NULL CHECK(day_type IN ('Thursday', 'Friday')),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         ''')
         
-        # Attendance table - tracks actual attendance
+        # Attendance table - links Users to Games with attendance status
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS Attendance (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                MYTF_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
-                thursdays TEXT DEFAULT '',
-                fridays TEXT DEFAULT '',
+                game_id INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('Present', 'Absent', 'Unknown')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (MYTF_id) REFERENCES Month_Year_Thursday_Friday(id) ON DELETE CASCADE,
-                FOREIGN KEY (user_id) REFERENCES User(id) ON DELETE CASCADE,
-                UNIQUE(MYTF_id, user_id)
+                FOREIGN KEY (user_id) REFERENCES Users(id) ON DELETE CASCADE,
+                FOREIGN KEY (game_id) REFERENCES Games(id) ON DELETE CASCADE,
+                UNIQUE(user_id, game_id)
+            )
+        ''')
+        
+        # SQL_Report table - stores script reports
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS SQL_Report (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                script_path TEXT NOT NULL,
+                parameters TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
         # Create indexes for better query performance
-        # SQL Reports table - stores custom Python scripts for reporting
-        # Check if old table exists with 'sql' column and migrate if needed
-        cursor.execute("PRAGMA table_info(SQL_Report)")
-        columns = [row[1] for row in cursor.fetchall()]
-        
-        if columns and 'sql' in columns and 'script_path' not in columns:
-            # Migrate from old schema (sql) to new schema (script_path)
-            cursor.execute('''
-                CREATE TABLE SQL_Report_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    description TEXT,
-                    script_path TEXT NOT NULL,
-                    parameters TEXT DEFAULT '[]',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                INSERT INTO SQL_Report_new (id, name, description, script_path, parameters, created_at)
-                SELECT id, name, description, 
-                       CASE WHEN sql IS NOT NULL THEN 'migrated_script.py' ELSE 'new_script.py' END,
-                       parameters, created_at
-                FROM SQL_Report
-            ''')
-            cursor.execute('DROP TABLE SQL_Report')
-            cursor.execute('ALTER TABLE SQL_Report_new RENAME TO SQL_Report')
-        else:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS SQL_Report (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    description TEXT,
-                    script_path TEXT NOT NULL,
-                    parameters TEXT DEFAULT '[]',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-        
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_active ON User(active)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_play_thursdays ON User(play_thursdays)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_play_fridays ON User(play_fridays)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_mytf_id ON Attendance(MYTF_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_active ON Users(active)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_play_thursdays ON Users(play_thursdays)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_play_fridays ON Users(play_fridays)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_games_date ON Games(game_date)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_user_id ON Attendance(user_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_game_id ON Attendance(game_id)')
         
         self.conn.commit()
     
     def get_or_create_month(self, month: int, year: int) -> Dict[str, Any]:
-        """Get existing month record or create new one. Returns the month data."""
+        """Get or create games for a specific month.
+        
+        Returns dict with 'thursdays', 'fridays' as YYYYMMDD lists,
+        and 'thursdays_str', 'fridays_str' as comma-separated strings for compatibility.
+        """
         cursor = self.conn.cursor()
         
         thursdays = []
@@ -168,54 +142,149 @@ class Database:
             fridays.append(current_date.strftime('%Y%m%d'))
             current_date += timedelta(days=7)
         
-        thursdays_str = ','.join(thursdays) if thursdays else ''
-        fridays_str = ','.join(fridays) if fridays else ''
+        # Create games in database
+        for date_str in thursdays:
+            try:
+                cursor.execute('''
+                    INSERT INTO Games (game_date, day_type)
+                    VALUES (?, 'Thursday')
+                ''', (date_str,))
+            except sqlite3.IntegrityError:
+                # Game already exists
+                pass
         
-        # Check if record exists
-        cursor.execute('''
-            SELECT id, thursdays, fridays, created_at FROM Month_Year_Thursday_Friday 
-            WHERE MM = ? AND YYYY = ?
-        ''', (month, year))
+        for date_str in fridays:
+            try:
+                cursor.execute('''
+                    INSERT INTO Games (game_date, day_type)
+                    VALUES (?, 'Friday')
+                ''', (date_str,))
+            except sqlite3.IntegrityError:
+                # Game already exists
+                pass
         
-        existing = cursor.fetchone()
-        
-        if existing:
-            return {
-                'id': existing['id'],
-                'MM': month,
-                'YYYY': year,
-                'thursdays': thursdays_str,
-                'fridays': fridays_str,
-                'created_at': str(existing['created_at']),
-                'duplicate': True
-            }
-        
-        # Create new record
-        cursor.execute('''
-            INSERT INTO Month_Year_Thursday_Friday (MM, YYYY, thursdays, fridays)
-            VALUES (?, ?, ?, ?)
-            RETURNING id, created_at
-        ''', (month, year, thursdays_str, fridays_str))
-        
-        result = cursor.fetchone()
         self.conn.commit()
         
         return {
-            'id': result['id'],
-            'MM': month,
-            'YYYY': year,
-            'thursdays': thursdays_str,
-            'fridays': fridays_str,
-            'created_at': str(result['created_at']),
-            'duplicate': False
+            'thursdays': thursdays,
+            'fridays': fridays,
+            'thursdays_str': ','.join(thursdays),
+            'fridays_str': ','.join(fridays)
         }
+    
+    def get_or_create_games_for_month(self, month: int, year: int) -> Dict[str, List[str]]:
+        """Get or create games (game dates) for a specific month.
+        
+        Returns dict with 'thursdays' and 'fridays' lists of YYYYMMDD date strings.
+        """
+        cursor = self.conn.cursor()
+        
+        thursdays = []
+        fridays = []
+        
+        current_date = date(year, month, 1)
+        
+        # Find first Thursday (weekday() returns 3 for Thursday)
+        while current_date.weekday() != 3:
+            current_date += timedelta(days=1)
+        
+        # Collect all Thursdays in the month
+        while current_date.month == month:
+            thursdays.append(current_date.strftime('%Y%m%d'))
+            current_date += timedelta(days=7)
+        
+        # Find first Friday (weekday() returns 4 for Friday)
+        current_date = date(year, month, 1)
+        while current_date.weekday() != 4:
+            current_date += timedelta(days=1)
+        
+        # Collect all Fridays in the month
+        while current_date.month == month:
+            fridays.append(current_date.strftime('%Y%m%d'))
+            current_date += timedelta(days=7)
+        
+        # Create games in database
+        for date_str in thursdays:
+            try:
+                cursor.execute('''
+                    INSERT INTO Games (game_date, day_type)
+                    VALUES (?, 'Thursday')
+                ''', (date_str,))
+            except sqlite3.IntegrityError:
+                # Game already exists
+                pass
+        
+        for date_str in fridays:
+            try:
+                cursor.execute('''
+                    INSERT INTO Games (game_date, day_type)
+                    VALUES (?, 'Friday')
+                ''', (date_str,))
+            except sqlite3.IntegrityError:
+                # Game already exists
+                pass
+        
+        self.conn.commit()
+        
+        return {
+            'thursdays': thursdays,
+            'fridays': fridays
+        }
+    
+    def get_games_for_month(self, month: int, year: int) -> Dict[str, List[str]]:
+        """Get game dates for a specific month.
+        
+        Returns dict with 'thursdays' and 'fridays' lists of YYYYMMDD date strings.
+        """
+        cursor = self.conn.cursor()
+        
+        thursdays = []
+        fridays = []
+        
+        current_date = date(year, month, 1)
+        
+        # Find first Thursday (weekday() returns 3 for Thursday)
+        while current_date.weekday() != 3:
+            current_date += timedelta(days=1)
+        
+        # Collect all Thursdays in the month
+        while current_date.month == month:
+            thursdays.append(current_date.strftime('%Y%m%d'))
+            current_date += timedelta(days=7)
+        
+        # Find first Friday (weekday() returns 4 for Friday)
+        current_date = date(year, month, 1)
+        while current_date.weekday() != 4:
+            current_date += timedelta(days=1)
+        
+        # Collect all Fridays in the month
+        while current_date.month == month:
+            fridays.append(current_date.strftime('%Y%m%d'))
+            current_date += timedelta(days=7)
+        
+        return {
+            'thursdays': thursdays,
+            'fridays': fridays
+        }
+    
+    def get_game_id_by_date(self, date_str: str) -> Optional[int]:
+        """Get game ID by date string (YYYYMMDD format)."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id FROM Games WHERE game_date = ?', (date_str,))
+        row = cursor.fetchone()
+        return row['id'] if row else None
+    
+    def get_game_info_by_date(self, date_str: str) -> Optional[Dict[str, Any]]:
+        """Get game info by date string (YYYYMMDD format)."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id, game_date, day_type FROM Games WHERE game_date = ?', (date_str,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
     
     def create_user(self, first: str, last: str,
                    active: bool = True, play_thursdays: bool = False, play_fridays: bool = False,
                    email: Optional[str] = None, phone: Optional[str] = None,
-                   prefer_email: bool = False, prefer_phone: bool = False, prefer_text: bool = False,
-                   all_month: bool = True, select_days: bool = False,
-                   will_come: bool = False, will_leave: bool = False) -> Optional[int]:
+                   prefer_email: bool = False, prefer_phone: bool = False, prefer_text: bool = False) -> Optional[int]:
         """Create a new user. Returns the user ID."""
         cursor = self.conn.cursor()
         
@@ -233,19 +302,15 @@ class Database:
         if not play_thursdays and not play_fridays:
             raise ValueError("User must play on Thursday, Friday, or both")
         
-        # Validate all_month/select_days
-        if all_month and select_days:
-            raise ValueError("Cannot have both all_month and select_days enabled")
-        
         cursor.execute('''
-            INSERT INTO User (active, play_thursdays, play_fridays, first, last,
-                            email, phone, prefer_email, prefer_phone, prefer_text,
-                            all_month, select_days, will_come, will_leave)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO Users (first, last, email, phone,
+                            prefer_email, prefer_phone, prefer_text,
+                            active, play_thursdays, play_fridays)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
-        ''', (active, play_thursdays, play_fridays, first, last,
-              email, phone, prefer_email, prefer_phone, prefer_text,
-              all_month, select_days, will_come, will_leave))
+        ''', (first, last, email, phone,
+              prefer_email, prefer_phone, prefer_text,
+              active, play_thursdays, play_fridays))
         
         result = cursor.fetchone()
         self.conn.commit()
@@ -254,21 +319,21 @@ class Database:
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Get a user by ID."""
         cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM User WHERE id = ?', (user_id,))
+        cursor.execute('SELECT * FROM Users WHERE id = ?', (user_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
     
     def get_user_by_name(self, first: str, last: str) -> Optional[Dict[str, Any]]:
         """Get a user by name."""
         cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM User WHERE first = ? AND last = ?', (first, last))
+        cursor.execute('SELECT * FROM Users WHERE first = ? AND last = ?', (first, last))
         row = cursor.fetchone()
         return dict(row) if row else None
     
     def get_user_by_phone(self, phone: str) -> Optional[Dict[str, Any]]:
         """Get a user by phone number."""
         cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM User WHERE phone = ?', (phone,))
+        cursor.execute('SELECT * FROM Users WHERE phone = ?', (phone,))
         row = cursor.fetchone()
         return dict(row) if row else None
     
@@ -276,9 +341,9 @@ class Database:
         """Get all users, optionally filtered by active status."""
         cursor = self.conn.cursor()
         if active_only:
-            cursor.execute('SELECT * FROM User WHERE active = 1 ORDER BY last, first')
+            cursor.execute('SELECT * FROM Users WHERE active = 1 ORDER BY last, first')
         else:
-            cursor.execute('SELECT * FROM User ORDER BY last, first')
+            cursor.execute('SELECT * FROM Users ORDER BY last, first')
         
         return [dict(row) for row in cursor.fetchall()]
     
@@ -295,7 +360,7 @@ class Database:
         import re
         
         cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM User WHERE active = 1 ORDER BY last, first')
+        cursor.execute('SELECT * FROM Users WHERE active = 1 ORDER BY last, first')
         users = [dict(row) for row in cursor.fetchall()]
         
         if not search_term or not search_term.strip():
@@ -326,16 +391,8 @@ class Database:
         if pref_count > 1:
             raise ValueError("Only one communication preference can be selected at a time")
         
-        # Validate day preferences
-        if kwargs.get('play_thursdays') and kwargs.get('play_fridays'):
-            pass  # Both can be true
-        
-        if kwargs.get('all_month') and kwargs.get('select_days'):
-            raise ValueError("Cannot have both all_month and select_days enabled")
-        
         valid_fields = ['active', 'play_thursdays', 'play_fridays', 'first', 'last',
-                       'email', 'phone', 'prefer_email', 'prefer_phone', 'prefer_text',
-                       'all_month', 'select_days', 'will_come', 'will_leave']
+                       'email', 'phone', 'prefer_email', 'prefer_phone', 'prefer_text']
         updates = {k: v for k, v in kwargs.items() if k in valid_fields}
         
         if not updates:
@@ -345,7 +402,7 @@ class Database:
         values = list(updates.values()) + [user_id]
         
         cursor.execute(f'''
-            UPDATE User SET {set_clause}
+            UPDATE Users SET {set_clause}
             WHERE id = ?
         ''', values)
         
@@ -355,189 +412,142 @@ class Database:
     def delete_user(self, user_id: int) -> bool:
         """Delete a user. Returns True if successful."""
         cursor = self.conn.cursor()
-        cursor.execute('DELETE FROM User WHERE id = ?', (user_id,))
+        cursor.execute('DELETE FROM Users WHERE id = ?', (user_id,))
         self.conn.commit()
         return cursor.rowcount > 0
     
-    def get_or_create_attendance(self, mytf_id: int, user_id: int,
-                                  num_thursdays: int, num_fridays: int) -> Dict[str, List[bool]]:
-        """Get or create attendance record for a user in a month."""
+    def get_or_create_attendance(self, user_id: int, game_id: int, 
+                                  default_status: str = 'Present') -> str:
+        """Get or create attendance record for a user at a game.
+        
+        Returns the attendance status ('Present', 'Absent', or 'Unknown').
+        """
         cursor = self.conn.cursor()
         
         # Check if attendance exists
         cursor.execute('''
-            SELECT thursdays, fridays FROM Attendance 
-            WHERE MYTF_id = ? AND user_id = ?
-        ''', (mytf_id, user_id))
+            SELECT status FROM Attendance 
+            WHERE user_id = ? AND game_id = ?
+        ''', (user_id, game_id))
         
         existing = cursor.fetchone()
         
         if existing:
-            thursdays = [bool(int(x)) for x in existing['thursdays'].split(',') if x] if existing['thursdays'] else []
-            fridays = [bool(int(x)) for x in existing['fridays'].split(',') if x] if existing['fridays'] else []
-        else:
-            thursdays = [False] * num_thursdays
-            fridays = [False] * num_fridays
+            return existing['status']
         
-        return {
-            'thursdays': thursdays,
-            'fridays': fridays
-        }
+        # Create default attendance record
+        cursor.execute('''
+            INSERT INTO Attendance (user_id, game_id, status)
+            VALUES (?, ?, ?)
+            RETURNING status
+        ''', (user_id, game_id, default_status))
+        
+        result = cursor.fetchone()
+        self.conn.commit()
+        return result['status'] if result else default_status
     
-    def update_attendance(self, mytf_id: int, user_id: int,
-                          thursdays: List[bool], fridays: List[bool]) -> Optional[int]:
+    def update_attendance(self, user_id: int, game_id: int, status: str) -> Optional[int]:
         """Update or create attendance record. Returns the attendance ID."""
-        import logging
-        logger = logging.getLogger(__name__)
-        
         cursor = self.conn.cursor()
         
-        logger.debug(f"update_attendance called: mytf_id={mytf_id}, user_id={user_id}")
-        logger.debug(f"Input data - thursdays: {thursdays}, fridays: {fridays}")
-        logger.debug(f"Input types - thursdays: {type(thursdays)}, fridays: {type(fridays)}")
+        # Validate status
+        if status not in ('Present', 'Absent', 'Unknown'):
+            raise ValueError("Status must be 'Present', 'Absent', or 'Unknown'")
         
         # Check if attendance exists
-        cursor.execute('SELECT id FROM Attendance WHERE MYTF_id = ? AND user_id = ?', (mytf_id, user_id))
+        cursor.execute('SELECT id FROM Attendance WHERE user_id = ? AND game_id = ?', (user_id, game_id))
         existing = cursor.fetchone()
-        logger.debug(f"Existing record: {existing}")
-        
-        thursdays_str = ','.join(str(int(b)) for b in thursdays) if thursdays else ''
-        fridays_str = ','.join(str(int(b)) for b in fridays) if fridays else ''
-        
-        logger.debug(f"String data to save - thursdays_str: '{thursdays_str}', fridays_str: '{fridays_str}'")
         
         if existing:
             cursor.execute('''
                 UPDATE Attendance 
-                SET thursdays = ?, fridays = ?
-                WHERE MYTF_id = ? AND user_id = ?
-            ''', (thursdays_str, fridays_str, mytf_id, user_id))
+                SET status = ?
+                WHERE user_id = ? AND game_id = ?
+            ''', (status, user_id, game_id))
             result_id = existing['id']
-            logger.debug(f"Updated existing record with id: {result_id}")
         else:
             cursor.execute('''
-                INSERT INTO Attendance (MYTF_id, user_id, thursdays, fridays)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO Attendance (user_id, game_id, status)
+                VALUES (?, ?, ?)
                 RETURNING id
-            ''', (mytf_id, user_id, thursdays_str, fridays_str))
+            ''', (user_id, game_id, status))
             result = cursor.fetchone()
             result_id = result['id'] if result else None
-            logger.debug(f"Inserted new record with id: {result_id}")
         
         self.conn.commit()
-        logger.info(f"Committed attendance update for user_id={user_id}, mytf_id={mytf_id}")
-        logger.debug(f"Returning result_id: {result_id}")
         return result_id
     
-    def create_attendance_for_all_month_users(self, mytf_id: int, month: int, year: int) -> int:
-        """Create attendance records for all users with all_month=True.
+    def get_attendance_status(self, user_id: int, game_id: int) -> Optional[str]:
+        """Get attendance status for a user at a game."""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT status FROM Attendance 
+            WHERE user_id = ? AND game_id = ?
+        ''', (user_id, game_id))
         
-        Returns the number of attendance records created.
+        row = cursor.fetchone()
+        return row['status'] if row else None
+    
+    def get_month_attendance(self, month: int, year: int) -> List[Dict[str, Any]]:
+        """Get attendance report for a specific month.
+        
+        Returns list of records with user info and attendance for each date.
         """
         cursor = self.conn.cursor()
         
-        # Get all active users with all_month=True
+        # Get games for this month
+        games_info = self.get_games_for_month(month, year)
+        thursday_dates = games_info['thursdays']
+        friday_dates = games_info['fridays']
+        
+        # Build query to get all active users
         cursor.execute('''
-            SELECT id, play_thursdays, play_fridays, first, last 
-            FROM User 
-            WHERE active = 1 AND all_month = 1
+            SELECT id, first, last, phone, email,
+                   play_thursdays, play_fridays
+            FROM Users
+            WHERE active = 1
+            ORDER BY last, first
         ''')
-        users = cursor.fetchall()
         
-        # Get month record to count Thursdays and Fridays
-        cursor.execute('SELECT thursdays, fridays FROM Month_Year_Thursday_Friday WHERE id = ?', (mytf_id,))
-        month_record = cursor.fetchone()
+        users = [dict(row) for row in cursor.fetchall()]
         
-        if not month_record:
-            return 0
-        
-        thursday_dates = month_record['thursdays'].split(',') if month_record['thursdays'] else []
-        friday_dates = month_record['fridays'].split(',') if month_record['fridays'] else []
-        
-        num_thursdays = len(thursday_dates)
-        num_fridays = len(friday_dates)
-        
-        created_count = 0
-        
+        results = []
         for user in users:
-            user_id = user['id']
-            play_thursdays = user['play_thursdays']
-            play_fridays = user['play_fridays']
+            record = {
+                'user_id': user['id'],
+                'first': user['first'],
+                'last': user['last'],
+                'phone': user['phone'],
+                'email': user['email'],
+                'play_thursdays': user['play_thursdays'],
+                'play_fridays': user['play_fridays'],
+                'att_thursdays': [],
+                'att_fridays': [],
+                'thursdays_list': thursday_dates,
+                'fridays_list': friday_dates
+            }
             
-            # Create attendance with all True for days they play
-            if play_thursdays and num_thursdays > 0:
-                thursdays = [True] * num_thursdays
-            else:
-                thursdays = []
+            # Get attendance for each Thursday
+            for date_str in thursday_dates:
+                game_id = self.get_game_id_by_date(date_str)
+                if game_id:
+                    status = self.get_attendance_status(user['id'], game_id)
+                    record['att_thursdays'].append(status == 'Present')
+                else:
+                    record['att_thursdays'].append(None)  # Unknown
             
-            if play_fridays and num_fridays > 0:
-                fridays = [True] * num_fridays
-            else:
-                fridays = []
+            # Get attendance for each Friday
+            for date_str in friday_dates:
+                game_id = self.get_game_id_by_date(date_str)
+                if game_id:
+                    status = self.get_attendance_status(user['id'], game_id)
+                    record['att_fridays'].append(status == 'Present')
+                else:
+                    record['att_fridays'].append(None)  # Unknown
             
-            # Check if attendance already exists
-            cursor.execute('SELECT id FROM Attendance WHERE MYTF_id = ? AND user_id = ?', (mytf_id, user_id))
-            existing = cursor.fetchone()
-            
-            thursdays_str = ','.join(str(int(b)) for b in thursdays)
-            fridays_str = ','.join(str(int(b)) for b in fridays)
-            
-            if existing:
-                # Update existing record with all attending
-                cursor.execute('''
-                    UPDATE Attendance 
-                    SET thursdays = ?, fridays = ?
-                    WHERE MYTF_id = ? AND user_id = ?
-                ''', (thursdays_str, fridays_str, mytf_id, user_id))
-            else:
-                # Create new attendance record
-                cursor.execute('''
-                    INSERT INTO Attendance (MYTF_id, user_id, thursdays, fridays)
-                    VALUES (?, ?, ?, ?)
-                ''', (mytf_id, user_id, thursdays_str, fridays_str))
-                created_count += 1
+            results.append(record)
         
-        self.conn.commit()
-        return created_count
-    
-    def get_month_by_date(self, month: int, year: int) -> Optional[Dict[str, Any]]:
-        """Get a month record by MM and YYYY."""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT * FROM Month_Year_Thursday_Friday 
-            WHERE MM = ? AND YYYY = ?
-        ''', (month, year))
-        
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    
-    def get_all_months(self) -> List[Dict[str, Any]]:
-        """Get all months in the database."""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM Month_Year_Thursday_Friday ORDER BY YYYY DESC, MM DESC')
-        return [dict(row) for row in cursor.fetchall()]
-    
-    def delete_month(self, month: int, year: int) -> bool:
-        """Delete a month record and associated attendance records."""
-        cursor = self.conn.cursor()
-        
-        # First get the month ID
-        cursor.execute('SELECT id FROM Month_Year_Thursday_Friday WHERE MM = ? AND YYYY = ?', (month, year))
-        row = cursor.fetchone()
-        
-        if not row:
-            return False
-        
-        month_id = row['id']
-        
-        # Delete attendance records for this month
-        cursor.execute('DELETE FROM Attendance WHERE MYTF_id = ?', (month_id,))
-        
-        # Delete the month record
-        cursor.execute('DELETE FROM Month_Year_Thursday_Friday WHERE id = ?', (month_id,))
-        
-        self.conn.commit()
-        return True
+        return results
     
     def get_attendance_report(self, month: Optional[int] = None, year: Optional[int] = None,
                              play_thursdays: bool = False, play_fridays: bool = False,
@@ -548,52 +558,39 @@ class Database:
         """
         cursor = self.conn.cursor()
         
-        # First, get or create the month record
+        # Get games for the month
         if month is not None and year is not None:
-            month_record = self.get_or_create_month(month, year)
-            mytf_id = month_record['id']
-            
-            # Get the dates for this month
-            thursdays_str = month_record.get('thursdays', '')
-            fridays_str = month_record.get('fridays', '')
-            thursday_dates = thursdays_str.split(',') if thursdays_str else []
-            friday_dates = fridays_str.split(',') if fridays_str else []
-            num_thursdays = len(thursday_dates)
-            num_fridays = len(friday_dates)
+            games_info = self.get_games_for_month(month, year)
+            thursday_dates = games_info['thursdays']
+            friday_dates = games_info['fridays']
         else:
-            month_record = None
-            mytf_id = None
             thursday_dates = []
             friday_dates = []
-            num_thursdays = 0
-            num_fridays = 0
         
         # Build query to get users with their attendance records
-        # Only include users who have attendance records (INNER JOIN)
         query = '''
             SELECT u.id as user_id, u.first, u.last, u.phone, u.email,
-                   u.play_thursdays, u.play_fridays,
-                   a.thursdays as attendance_thursdays, a.fridays as attendance_fridays
-            FROM User u
-            JOIN Attendance a ON u.id = a.user_id
+                   u.play_thursdays, u.play_fridays
+            FROM Users u
         '''
         
         params = []
         
-        # Add month filter if we have a month record
-        if mytf_id is not None:
-            query += ' WHERE a.MYTF_id = ?'
-            params.append(mytf_id)
-        
         # Add active filter
         if active_only:
-            query += ' AND u.active = 1'
+            query += ' WHERE u.active = 1'
         
         # Add day preference filters
         if play_thursdays and not play_fridays:
-            query += ' AND u.play_thursdays = 1'
+            if active_only:
+                query += ' AND u.play_thursdays = 1'
+            else:
+                query += ' WHERE u.play_thursdays = 1'
         elif play_fridays and not play_thursdays:
-            query += ' AND u.play_fridays = 1'
+            if active_only:
+                query += ' AND u.play_fridays = 1'
+            else:
+                query += ' WHERE u.play_fridays = 1'
         
         query += ' ORDER BY u.last, u.first'
         
@@ -603,13 +600,24 @@ class Database:
         for row in cursor.fetchall():
             record = dict(row)
             
-            # Parse attendance
-            att_thursdays_str = record.get('attendance_thursdays') or ''
-            att_fridays_str = record.get('attendance_fridays') or ''
+            # Get attendance for each date
+            att_thursdays = []
+            for date_str in thursday_dates:
+                game_id = self.get_game_id_by_date(date_str)
+                if game_id:
+                    status = self.get_attendance_status(record['user_id'], game_id)
+                    att_thursdays.append(status == 'Present' if status else None)
+                else:
+                    att_thursdays.append(None)
             
-            # Parse attendance arrays
-            att_thursdays = [bool(int(x)) for x in att_thursdays_str.split(',') if x] if att_thursdays_str else []
-            att_fridays = [bool(int(x)) for x in att_fridays_str.split(',') if x] if att_fridays_str else []
+            att_fridays = []
+            for date_str in friday_dates:
+                game_id = self.get_game_id_by_date(date_str)
+                if game_id:
+                    status = self.get_attendance_status(record['user_id'], game_id)
+                    att_fridays.append(status == 'Present' if status else None)
+                else:
+                    att_fridays.append(None)
             
             record['thursdays_list'] = thursday_dates
             record['fridays_list'] = friday_dates
@@ -620,47 +628,108 @@ class Database:
         
         return results
     
-    def get_user_months(self, user_id: int) -> List[Dict[str, Any]]:
-        """Get all months a user has attendance records for."""
+    def create_attendance_for_all_month_users(self, month: int, year: int) -> int:
+        """Create attendance records for all users with their default attendance.
+        
+        Returns the number of attendance records created.
+        """
         cursor = self.conn.cursor()
+        
+        # Get games for this month
+        games_info = self.get_games_for_month(month, year)
+        thursday_dates = games_info['thursdays']
+        friday_dates = games_info['fridays']
+        
+        # Get all active users
         cursor.execute('''
-            SELECT DISTINCT m.MM as month, m.YYYY as year
+            SELECT id, play_thursdays, play_fridays, first, last 
+            FROM Users 
+            WHERE active = 1
+        ''')
+        users = cursor.fetchall()
+        
+        created_count = 0
+        
+        for user in users:
+            user_id = user['id']
+            play_thursdays = user['play_thursdays']
+            play_fridays = user['play_fridays']
+            
+            # Create attendance records for each Thursday
+            for date_str in thursday_dates:
+                game_id = self.get_game_id_by_date(date_str)
+                if game_id:
+                    # Check if attendance already exists
+                    cursor.execute('SELECT id FROM Attendance WHERE user_id = ? AND game_id = ?', 
+                                  (user_id, game_id))
+                    existing = cursor.fetchone()
+                    
+                    if not existing:
+                        status = 'Present' if play_thursdays else 'Absent'
+                        cursor.execute('''
+                            INSERT INTO Attendance (user_id, game_id, status)
+                            VALUES (?, ?, ?)
+                        ''', (user_id, game_id, status))
+                        created_count += 1
+            
+            # Create attendance records for each Friday
+            for date_str in friday_dates:
+                game_id = self.get_game_id_by_date(date_str)
+                if game_id:
+                    # Check if attendance already exists
+                    cursor.execute('SELECT id FROM Attendance WHERE user_id = ? AND game_id = ?', 
+                                  (user_id, game_id))
+                    existing = cursor.fetchone()
+                    
+                    if not existing:
+                        status = 'Present' if play_fridays else 'Absent'
+                        cursor.execute('''
+                            INSERT INTO Attendance (user_id, game_id, status)
+                            VALUES (?, ?, ?)
+                        ''', (user_id, game_id, status))
+                        created_count += 1
+        
+        self.conn.commit()
+        return created_count
+    
+    def get_all_games(self) -> List[Dict[str, Any]]:
+        """Get all games in the database."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM Games ORDER BY game_date')
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def get_all_attendance(self, month: Optional[int] = None, year: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get all attendance records, optionally filtered by month/year."""
+        cursor = self.conn.cursor()
+        
+        query = '''
+            SELECT a.id, a.user_id, a.game_id, a.status, a.created_at,
+                   u.first, u.last, u.phone, u.email,
+                   g.game_date, g.day_type
             FROM Attendance a
-            JOIN Month_Year_Thursday_Friday m ON a.MYTF_id = m.id
-            WHERE a.user_id = ?
-            ORDER BY m.YYYY DESC, m.MM DESC
-        ''', (user_id,))
+            JOIN Users u ON a.user_id = u.id
+            JOIN Games g ON a.game_id = g.id
+        '''
+        
+        params = []
+        
+        if month is not None and year is not None:
+            # Get games for this month
+            games_info = self.get_games_for_month(month, year)
+            all_dates = games_info['thursdays'] + games_info['fridays']
+            
+            # Build IN clause for date filtering
+            placeholders = ','.join('?' * len(all_dates))
+            query += f' WHERE g.game_date IN ({placeholders})'
+            params.extend(all_dates)
+        
+        query += ' ORDER BY u.last, u.first, g.game_date'
+        
+        cursor.execute(query, params)
         
         return [dict(row) for row in cursor.fetchall()]
     
-    def get_month_attendance(self, mytf_id: int) -> List[Dict[str, Any]]:
-        """Get all attendance records for a specific month."""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT u.id as user_id, u.first, u.last, u.play_thursdays, u.play_fridays,
-                   a.thursdays, a.fridays
-            FROM Attendance a
-            JOIN User u ON a.user_id = u.id
-            WHERE a.MYTF_id = ?
-            ORDER BY u.last, u.first
-        ''', (mytf_id,))
-        
-        results = []
-        for row in cursor.fetchall():
-            record = dict(row)
-            
-            # Parse attendance arrays
-            thursdays_str = record.get('thursdays', '')
-            fridays_str = record.get('fridays', '')
-            
-            record['att_thursdays'] = [bool(int(x)) for x in thursdays_str.split(',') if x] if thursdays_str else []
-            record['att_fridays'] = [bool(int(x)) for x in fridays_str.split(',') if x] if fridays_str else []
-            
-            results.append(record)
-        
-        return results
-    
-    # SQL Report CRUD methods
+    # SQL Report CRUD methods (maintained from old schema for compatibility)
     
     def get_all_sql_reports(self) -> List[Dict[str, Any]]:
         """Get all script reports."""
@@ -771,10 +840,11 @@ class Database:
         return cursor.rowcount > 0
     
     def execute_sql_report(self, report_id: int, param_values: Dict[str, Any] = None) -> tuple:
-        """Execute a Python script report and return (stdout, stderr, returncode)."""
+        """Execute a script report (Python or SQL) and return (stdout, stderr, returncode)."""
         import subprocess
         import os
         import logging
+        from pathlib import Path
         
         logger = logging.getLogger(__name__)
         
@@ -788,32 +858,68 @@ class Database:
         if not os.path.exists(script_path):
             raise ValueError(f"Script file not found: {script_path}")
         
-        # Build command line arguments from parameters
-        args = [script_path]
-        if param_values:
-            for param in report.get('parameters', []):
-                param_name = param.get('name')
-                if param_name and param_name in param_values:
-                    args.append(str(param_values[param_name]))
+        # Detect if it's a SQL file (by extension)
+        is_sql_file = script_path.lower().endswith('.sql')
         
-        # Execute the script
-        try:
-            result = subprocess.run(
-                ['python', *args],
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout
-            )
-            return (result.stdout, result.stderr, result.returncode)
-        except subprocess.TimeoutExpired:
-            return ("", "Script execution timed out after 5 minutes", -1)
-        except Exception as e:
-            return ("", f"Error executing script: {str(e)}", -1)
+        if is_sql_file:
+            # Build list of parameter values from param_values dict and report parameters
+            args = []
+            if param_values:
+                for param in report.get('parameters', []):
+                    param_name = param.get('name')
+                    if param_name and param_name in param_values:
+                        args.append(str(param_values[param_name]))
+            
+            # Use sql_report_helper for SQL file execution
+            # Note: param_values from report parameters are used first
+            helper_param_values = args if args else None
+            
+            try:
+                # Import and use the helper module
+                import sql_report_helper
+                stdout, stderr, returncode, output_file = sql_report_helper.execute_sql_report(
+                    script_path=script_path,
+                    db_path=self.db_path,
+                    param_values=helper_param_values,
+                    output_dir=str(Path(script_path).parent)
+                )
+                
+                # Read the output file contents for stdout
+                if output_file and os.path.exists(output_file):
+                    with open(output_file, 'r') as f:
+                        stdout_content = f.read()
+                    return (stdout_content, stderr, returncode)
+                else:
+                    return (stdout, stderr, returncode)
+            except Exception as e:
+                return ("", f"Error executing SQL: {str(e)}", -1)
+        else:
+            # Execute Python script (original behavior)
+            args = [script_path]
+            if param_values:
+                for param in report.get('parameters', []):
+                    param_name = param.get('name')
+                    if param_name and param_name in param_values:
+                        args.append(str(param_values[param_name]))
+            
+            # Execute the script
+            try:
+                result = subprocess.run(
+                    ['python', *args],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minute timeout
+                )
+                return (result.stdout, result.stderr, result.returncode)
+            except subprocess.TimeoutExpired:
+                return ("", "Script execution timed out after 5 minutes", -1)
+            except Exception as e:
+                return ("", f"Error executing script: {str(e)}", -1)
 
 
 def main():
     """Main entry point for the application."""
-    db_path = Path(__file__).parent / "bridge_attendance.db"
+    db_path = Path(__file__).parent / "bridge.db"
     db = Database(str(db_path))
     db.connect()
     
@@ -873,16 +979,11 @@ def main():
             month = int(input("Month (1-12): ").strip())
             year = int(input("Year: ").strip())
             
-            result = db.get_or_create_month(month, year)
-            if result.get('duplicate'):
-                print(f"Month record already exists for {month}/{year}")
-                print(f"Latest dates created: {result['created_at']}")
-            else:
-                print(f"Created month record for {month}/{year}")
-                thursdays = result['thursdays'].split(',') if result['thursdays'] else []
-                fridays = result['fridays'].split(',') if result['fridays'] else []
-                print(f"Thursdays: {', '.join(thursdays)}")
-                print(f"Fridays: {', '.join(fridays)}")
+            result = db.get_or_create_games_for_month(month, year)
+            thursdays = result['thursdays']
+            fridays = result['fridays']
+            print(f"Thursdays: {', '.join(thursdays)}")
+            print(f"Fridays: {', '.join(fridays)}")
         
         elif choice == "5":
             month = int(input("Month (1-12): ").strip())

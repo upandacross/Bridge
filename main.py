@@ -12,6 +12,21 @@ from datetime import date
 from typing import Optional, List, Dict, Any
 import logging
 
+# Color palette constants for consistent theming
+COLORS = {
+    'primary': (52, 152, 219),      # Blue
+    'primary_dark': (41, 128, 185), # Dark Blue
+    'success': (46, 204, 113),      # Green
+    'warning': (241, 196, 15),      # Yellow/Orange
+    'danger': (231, 76, 60),        # Red
+    'info': (52, 152, 219),         # Cyan
+    'header': (44, 62, 80),         # Dark Blue-Grey
+    'header_text': (236, 240, 241), # Light Gray-White
+    'bg_light': (245, 247, 249),    # Light background
+    'text_main': (44, 62, 80),      # Dark text
+    'text_secondary': (127, 140, 141), # Lighter text
+}
+
 # Set up logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -29,6 +44,49 @@ try:
 except ImportError:
     HAS_REPORTLAB = False
 
+# Theme IDs for colors
+theme_button_primary = None
+theme_button_success = None
+
+def create_themes():
+    """Create custom themes with colors for buttons and other widgets."""
+    global theme_button_primary, theme_button_success
+    
+    with dpg.theme() as theme_button_primary:
+        with dpg.theme_component(dpg.mvButton):
+            dpg.add_theme_color(dpg.mvThemeCol_Button, (52, 152, 219))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (52, 162, 235))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (41, 128, 185))
+            dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255))
+    
+    with dpg.theme() as theme_button_success:
+        with dpg.theme_component(dpg.mvButton):
+            dpg.add_theme_color(dpg.mvThemeCol_Button, (46, 204, 113))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (65, 214, 131))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (39, 174, 96))
+            dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255))
+    
+    with dpg.theme() as theme_button_warning:
+        with dpg.theme_component(dpg.mvButton):
+            dpg.add_theme_color(dpg.mvThemeCol_Button, (241, 196, 15))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (245, 205, 32))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (230, 190, 13))
+            dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255))
+    
+    with dpg.theme() as theme_button_danger:
+        with dpg.theme_component(dpg.mvButton):
+            dpg.add_theme_color(dpg.mvThemeCol_Button, (231, 76, 60))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (240, 88, 73))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (208, 64, 50))
+            dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255))
+    
+    return {
+        'primary': theme_button_primary,
+        'success': theme_button_success,
+        'warning': theme_button_warning,
+        'danger': theme_button_danger
+    }
+
 
 class BridgeApp:
     """Main application class for the Bridge Attendance GUI."""
@@ -37,7 +95,8 @@ class BridgeApp:
         if db_path is not None:
             self.db_path = Path(db_path)
         else:
-            self.db_path = Path(__file__).parent / "bridge_attendance.db"
+            # Use new schema database (bridge.db) with Users, Games, Attendance tables
+            self.db_path = Path(__file__).parent / "bridge.db"
         self.db: Optional[Database] = None
         self.app_instance = None
         self.all_users_sort_column = "last"  # Default sort by last name
@@ -49,6 +108,9 @@ class BridgeApp:
             return  # Already running
             
         dpg.create_context()
+        
+        # Create custom themes with colors
+        self.button_themes = create_themes()
         
         with dpg.window(label="Bridge Attendance", width=1200, height=800) as main_window:
             self.main_window_id = main_window
@@ -85,7 +147,12 @@ class BridgeApp:
                 with dpg.tab(label="SQL Reports") as self.sql_reports_tab_id:
                     self._build_sql_reports_view()
         
+        # Configure viewport theme
         dpg.create_viewport(title='Bridge Attendance', width=1200, height=800)
+        
+        # Set viewport clear color (background)
+        dpg.set_viewport_clear_color(COLORS['bg_light'])
+        
         dpg.setup_dearpygui()
         dpg.show_viewport()
         
@@ -104,15 +171,18 @@ class BridgeApp:
         """Build the users view."""
         with dpg.group(horizontal=True):
             with dpg.group(width=300):
-                dpg.add_text("Filter/Search Users")
+                # Header with color
+                dpg.add_text("Filter/Search Users", color=COLORS['header'])
                 dpg.add_input_text(label="Search", tag="user_search_input",
-                                  callback=lambda: self._filter_users())
+                                  callback=lambda: self._filter_users(), width=-1)
                 dpg.add_checkbox(label="Show Inactive", tag="show_inactive_checkbox",
                                callback=lambda: self._filter_users())
                 
-                dpg.add_spacer(height=20)
-                dpg.add_button(label="Add New User", callback=self._show_add_user_dialog,
-                              width=-1)
+                dpg.add_spacer(height=15)
+                # Add New User button - primary color
+                btn_add_user = dpg.add_button(label="Add New User", callback=self._show_add_user_dialog,
+                                              width=-1, indent=0)
+                dpg.bind_item_theme(btn_add_user, self.button_themes['primary'])
             
             with dpg.group():
                 with dpg.table(tag="users_table", header_row=True, policy=dpg.mvTable_SizingFixedFit,
@@ -705,7 +775,8 @@ class BridgeApp:
                 dpg.add_combo(tag="report_year", items=[str(y) for y in years], default_value=str(current_year))
                 
                 dpg.add_spacer(height=10)
-                dpg.add_button(label="Load Dates", callback=self._load_available_dates, width=-1)
+                btn_load_dates = dpg.add_button(label="Load Dates", callback=self._load_available_dates, width=-1)
+                dpg.bind_item_theme(btn_load_dates, self.button_themes['primary'])
                 
                 dpg.add_spacer(height=15)
                 dpg.add_text("Filter by Specific Date:")
@@ -722,11 +793,14 @@ class BridgeApp:
                                     default_value="All", callback=self._generate_attendance_report)
                 
                 dpg.add_spacer(height=15)
-                dpg.add_button(label="Generate Report", callback=self._generate_attendance_report,
-                              width=-1)
+                btn_generate_report = dpg.add_button(label="Generate Report", callback=self._generate_attendance_report, width=-1)
+                dpg.bind_item_theme(btn_generate_report, self.button_themes['primary'])
                 if HAS_REPORTLAB:
                     dpg.add_spacer(height=10)
-                    dpg.add_button(label="Export to PDF", callback=self._export_attendance_report_pdf, width=-1)
+                if HAS_REPORTLAB:
+                    dpg.add_spacer(height=10)
+                    btn_export_pdf = dpg.add_button(label="Export to PDF", callback=self._export_attendance_report_pdf, width=-1)
+                    dpg.bind_item_theme(btn_export_pdf, self.button_themes['success'])
             
             with dpg.group(tag="attendance_report_container"):
                 with dpg.table(tag="attendance_table", header_row=True, policy=dpg.mvTable_SizingFixedFit,
@@ -752,8 +826,8 @@ class BridgeApp:
         
         # Get month record to find all dates
         month_record = self.db.get_or_create_month(selected_month, selected_year)
-        thursday_dates = month_record.get('thursdays', '').split(',') if month_record.get('thursdays') else []
-        friday_dates = month_record.get('fridays', '').split(',') if month_record.get('fridays') else []
+        thursday_dates = month_record.get('thursdays', [])
+        friday_dates = month_record.get('fridays', [])
         
         # Build date options
         date_options = ["All Dates"]
@@ -804,8 +878,8 @@ class BridgeApp:
             
             # Get month record to find all dates
             month_record = self.db.get_or_create_month(selected_month, selected_year)
-            thursday_dates = month_record.get('thursdays', '').split(',') if month_record.get('thursdays') else []
-            friday_dates = month_record.get('fridays', '').split(',') if month_record.get('fridays') else []
+            thursday_dates = month_record.get('thursdays', [])
+            friday_dates = month_record.get('fridays', [])
             
             # Parse specific date filter if selected
             specific_date_str = None
@@ -1088,8 +1162,8 @@ class BridgeApp:
                 dpg.add_combo(tag="schedule_year", items=[str(y) for y in years], default_value=str(current_year))
                 
                 dpg.add_spacer(height=10)
-                dpg.add_button(label="Generate Schedule", callback=self._generate_month_schedule,
-                              width=-1)
+                btn_generate_schedule = dpg.add_button(label="Generate Schedule", callback=self._generate_month_schedule, width=-1)
+                dpg.bind_item_theme(btn_generate_schedule, self.button_themes['primary'])
             
             with dpg.group():
                 with dpg.table(tag="schedule_table", header_row=True, policy=dpg.mvTable_SizingFixedFit,
@@ -1113,21 +1187,21 @@ class BridgeApp:
         
         # Get or create the month record
         result = self.db.get_or_create_month(selected_month, selected_year)
+        thursday_dates = result.get('thursdays', [])
+        friday_dates = result.get('fridays', [])
         
-        # If this is a newly created month (not duplicate), create attendance for all_month users
-        if not result.get('duplicate', False):
-            month_id = result['id']
-            created_count = self.db.create_attendance_for_all_month_users(month_id, selected_month, selected_year)
-            if created_count > 0:
-                with dpg.window(label="Attendance Created", width=400, pos=(200, 200)):
-                    dpg.add_text(f"Created attendance records for {created_count} 'all month' users")
+        # Create attendance for users who play on those days
+        created_count = self.db.create_attendance_for_all_month_users(selected_month, selected_year)
+        if created_count > 0:
+            with dpg.window(label="Attendance Created", width=400, pos=(200, 200)):
+                dpg.add_text(f"Created attendance records for {created_count} 'all month' users")
         
         # Get existing table or rebuild it
         if dpg.does_item_exist("schedule_table"):
             dpg.delete_item("schedule_table")
         
-        thursdays = result.get('thursdays', '').split(',') if result.get('thursdays') else []
-        fridays = result.get('fridays', '').split(',') if result.get('fridays') else []
+        thursdays = result.get('thursdays', [])
+        fridays = result.get('fridays', [])
         
         with dpg.table(tag="schedule_table", parent=self.month_schedule_tab_id, header_row=True, policy=dpg.mvTable_SizingFixedFit,
                       scrollX=True, scrollY=True, row_background=True,
@@ -1988,16 +2062,12 @@ class BridgeApp:
         
         logger.debug(f"Selected month: {selected_month}, year: {selected_year}")
         
-        # Get the month record
-        month_record = self.db.get_month_by_date(selected_month, selected_year)
-        if not month_record:
-            logger.error(f"No month record found for {selected_month}/{selected_year}")
-            with dpg.window(label="Error", width=300, pos=(150, 150)):
-                dpg.add_text("No month record found for the selected date.")
-            return
+        # Get dates from month
+        result = self.db.get_or_create_month(selected_month, selected_year)
+        thursday_dates = result.get('thursdays', [])
+        friday_dates = result.get('fridays', [])
         
-        mytf_id = month_record['id']
-        logger.debug(f"Month record ID: {mytf_id}")
+        logger.debug(f"Thursdays: {thursday_dates}, Fridays: {friday_dates}")
         
         # Update the attendance data with what's in our edit_attendance_data
         if hasattr(self, 'edit_attendance_data') and 'thursdays' in self.edit_attendance_data and 'fridays' in self.edit_attendance_data:
@@ -2007,9 +2077,23 @@ class BridgeApp:
             logger.debug(f"Attendance data to save - Thursdays: {thursdays}, Fridays: {fridays}")
             logger.debug(f"Data types - thursdays: {type(thursdays)}, fridays: {type(fridays)}")
             
-            # Save the attendance data
-            result = self.db.update_attendance(mytf_id, user_id, thursdays, fridays)
-            logger.debug(f"Database update_attendance returned: {result}")
+            # Save attendance for each Thursday
+            for idx, is_present in enumerate(thursdays):
+                if idx < len(thursday_dates):
+                    date_str = thursday_dates[idx]
+                    game_id = self.db.get_game_id_by_date(date_str)
+                    if game_id:
+                        status = 'Present' if is_present else 'Absent'
+                        self.db.update_attendance(user_id, game_id, status)
+            
+            # Save attendance for each Friday
+            for idx, is_present in enumerate(fridays):
+                if idx < len(friday_dates):
+                    date_str = friday_dates[idx]
+                    game_id = self.db.get_game_id_by_date(date_str)
+                    if game_id:
+                        status = 'Present' if is_present else 'Absent'
+                        self.db.update_attendance(user_id, game_id, status)
             
             # Update original data to match saved data and reset dirty flag
             self.edit_attendance_original = {
@@ -2044,12 +2128,57 @@ class BridgeApp:
         # Track the current user being edited
         self.current_edit_user = user_id
         
-        # Get attendance data for this user and month
-        mytf_id = month_record['id']
-        num_thursdays = len(month_record.get('thursdays', '').split(',')) if month_record.get('thursdays') else 0
-        num_fridays = len(month_record.get('fridays', '').split(',')) if month_record.get('fridays') else 0
+        # Get dates from month record
+        thursday_dates = month_record.get('thursdays', [])
+        friday_dates = month_record.get('fridays', [])
         
-        attendance_data = self.db.get_or_create_attendance(mytf_id, user_id, num_thursdays, num_fridays)
+        # Filter dates based on user preferences
+        if not user.get('play_thursdays'):
+            thursday_dates = []
+        if not user.get('play_fridays'):
+            friday_dates = []
+        
+        # Get selected month and year for display
+        month_names = ["January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "October", "November", "December"]
+        month_map = {name: i + 1 for i, name in enumerate(month_names)}
+        
+        selected_month = month_map.get(dpg.get_value("edit_attendance_month"), 
+                                      __import__('datetime').date.today().month)
+        selected_year = int(dpg.get_value("edit_attendance_year"))
+        
+        # Get game IDs for this month's dates
+        game_ids = {}
+        for date_str in thursday_dates:
+            game_id = self.db.get_game_id_by_date(date_str)
+            if game_id:
+                game_ids[f'thursday_{date_str}'] = game_id
+        
+        for date_str in friday_dates:
+            game_id = self.db.get_game_id_by_date(date_str)
+            if game_id:
+                game_ids[f'friday_{date_str}'] = game_id
+        
+        # Build attendance data dict with presence flags for each date
+        attendance_data = {'thursdays': [], 'fridays': []}
+        
+        # Get attendance status for each Thursday
+        for date_str in thursday_dates:
+            game_id = self.db.get_game_id_by_date(date_str)
+            if game_id:
+                status = self.db.get_attendance_status(user_id, game_id)
+                attendance_data['thursdays'].append(status == 'Present' if status else None)
+            else:
+                attendance_data['thursdays'].append(None)
+        
+        # Get attendance status for each Friday
+        for date_str in friday_dates:
+            game_id = self.db.get_game_id_by_date(date_str)
+            if game_id:
+                status = self.db.get_attendance_status(user_id, game_id)
+                attendance_data['fridays'].append(status == 'Present' if status else None)
+            else:
+                attendance_data['fridays'].append(None)
         
         # Store the data for later use in saving
         self.edit_attendance_data = {
@@ -2066,16 +2195,6 @@ class BridgeApp:
         # Reset dirty flag since we just loaded fresh data
         self.edit_attendance_dirty = False
         
-        # Get the dates for thursdays and fridays
-        thursday_dates = month_record.get('thursdays', '').split(',') if month_record.get('thursdays') else []
-        friday_dates = month_record.get('fridays', '').split(',') if month_record.get('fridays') else []
-        
-        # Filter dates based on user preferences
-        if not user.get('play_thursdays'):
-            thursday_dates = []
-        if not user.get('play_fridays'):
-            friday_dates = []
-        
         # Create the table with proper headers in the right panel
         with dpg.group(parent=right_panel):
             dpg.add_text(f"Editing attendance for {user['first']} {user['last']}")
@@ -2086,9 +2205,9 @@ class BridgeApp:
                           borders_innerH=True, borders_outerH=True, borders_innerV=True,
                           borders_outerV=True, width=800, height=500):
                 
-                # Add columns for User, YYYYMM, Day, and then the dates
+                # Add columns for User, Month/Year, Day, and then the dates
                 dpg.add_table_column(label="User", width_fixed=True, init_width_or_weight=150)
-                dpg.add_table_column(label="YYYYMM", width_fixed=True, init_width_or_weight=80)
+                dpg.add_table_column(label="Month", width_fixed=True, init_width_or_weight=100)
                 dpg.add_table_column(label="Day", width_fixed=True, init_width_or_weight=100)
                 
                 # Determine max number of columns needed
@@ -2102,7 +2221,7 @@ class BridgeApp:
                 if user.get('play_thursdays') and thursday_dates:
                     with dpg.table_row():
                         dpg.add_text(f"{user['first'][0]} {user['last']}")
-                        dpg.add_text(f"{month_record['YYYY']}{month_record['MM']:02d}")
+                        dpg.add_text(f"{selected_month:02d}/{selected_year}")
                         dpg.add_text("Thursday")
                         
                         # Add thursday attendance checkboxes
@@ -2110,10 +2229,10 @@ class BridgeApp:
                             if len(date_str) >= 8:
                                 month_day = f"{date_str[4:6]}/{date_str[6:8]}"
                                 checked = attendance_data['thursdays'][i] if i < len(attendance_data['thursdays']) else False
-                                dpg.add_checkbox(tag=f"thursday_{i}_{user_id}_{mytf_id}", 
+                                dpg.add_checkbox(tag=f"thursday_{i}_{user_id}", 
                                                default_value=checked,
                                                label=month_day,
-                                               user_data={'day_type': 'thursday', 'index': i},
+                                               user_data={'day_type': 'thursday', 'index': i, 'date_str': date_str},
                                                callback=self._update_attendance_checkboxes)
                         
                         # Fill remaining columns if fridays has more dates
@@ -2124,7 +2243,7 @@ class BridgeApp:
                 if user.get('play_fridays') and friday_dates:
                     with dpg.table_row():
                         dpg.add_text(f"{user['first'][0]} {user['last']}")
-                        dpg.add_text(f"{month_record['YYYY']}{month_record['MM']:02d}")
+                        dpg.add_text(f"{selected_month:02d}/{selected_year}")
                         dpg.add_text("Friday")
                         
                         # Add friday attendance checkboxes
@@ -2132,10 +2251,10 @@ class BridgeApp:
                             if len(date_str) >= 8:
                                 month_day = f"{date_str[4:6]}/{date_str[6:8]}"
                                 checked = attendance_data['fridays'][i] if i < len(attendance_data['fridays']) else False
-                                dpg.add_checkbox(tag=f"friday_{i}_{user_id}_{mytf_id}", 
+                                dpg.add_checkbox(tag=f"friday_{i}_{user_id}", 
                                                default_value=checked,
                                                label=month_day,
-                                               user_data={'day_type': 'friday', 'index': i},
+                                               user_data={'day_type': 'friday', 'index': i, 'date_str': date_str},
                                                callback=self._update_attendance_checkboxes)
                         
                         # Fill remaining columns if thursdays has more dates
@@ -2335,10 +2454,8 @@ def main():
                 year = int(input("Year: ").strip())
                 
                 result = db.get_or_create_month(month, year)
-                if result.get('duplicate'):
-                    print(f"Month record already exists for {month}/{year}")
-                else:
-                    print(f"Created month record for {month}/{year}")
+                print(f"Thursdays: {', '.join(result['thursdays'])}")
+                print(f"Fridays: {', '.join(result['fridays'])}")
             
             elif choice == "5":
                 break
