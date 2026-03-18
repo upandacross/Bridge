@@ -771,32 +771,38 @@ class BridgeApp:
             with dpg.group(width=300):
                 dpg.add_text("Filter by Month/Year")
                 
-                dpg.add_combo(tag="report_month", items=months, default_value=months[__import__('datetime').date.today().month - 1])
-                dpg.add_combo(tag="report_year", items=[str(y) for y in years], default_value=str(current_year))
+                with dpg.group(horizontal=True):
+                    dpg.add_combo(tag="report_month", items=months, 
+                                default_value=months[__import__('datetime').date.today().month - 1])
+                    dpg.add_combo(tag="report_year", items=[str(y) for y in years], 
+                                default_value=str(current_year))
                 
                 dpg.add_spacer(height=10)
                 btn_load_dates = dpg.add_button(label="Load Dates", callback=self._load_available_dates, width=-1)
                 dpg.bind_item_theme(btn_load_dates, self.button_themes['primary'])
                 
                 dpg.add_spacer(height=15)
-                dpg.add_text("Filter by Specific Date:")
-                dpg.add_combo(tag="report_specific_date", items=["All Dates"], default_value="All Dates", width=-1)
                 
-                dpg.add_spacer(height=15)
-                dpg.add_text("Filter by Day Type:")
-                dpg.add_radio_button(tag="report_day_filter", items=["All", "Thursday", "Friday"], 
-                                    default_value="All", callback=self._generate_attendance_report)
+                # Filter by Day (radio button in a row)
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Filter by Day:")
+                    dpg.add_radio_button(tag="report_day_filter", items=["All", "Thursday", "Friday"], 
+                                        default_value="All", callback=self._generate_attendance_report)
                 
-                dpg.add_spacer(height=15)
-                dpg.add_text("Filter by Attendance:")
-                dpg.add_radio_button(tag="report_attendance_filter", items=["All", "Attending", "Non-attended"], 
-                                    default_value="All", callback=self._generate_attendance_report)
+                # Filter by Attendance (radio button in a row)
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Filter by Attendance:")
+                    dpg.add_radio_button(tag="report_attendance_filter", items=["All", "Attending", "Non-attended"], 
+                                        default_value="All", callback=self._generate_attendance_report)
                 
                 dpg.add_spacer(height=15)
                 btn_generate_report = dpg.add_button(label="Generate Report", callback=self._generate_attendance_report, width=-1)
                 dpg.bind_item_theme(btn_generate_report, self.button_themes['primary'])
-                if HAS_REPORTLAB:
-                    dpg.add_spacer(height=10)
+                
+                dpg.add_spacer(height=10)
+                btn_export_csv = dpg.add_button(label="Save to CSV", callback=self._export_attendance_report_csv, width=-1)
+                dpg.bind_item_theme(btn_export_csv, self.button_themes['success'])
+                
                 if HAS_REPORTLAB:
                     dpg.add_spacer(height=10)
                     btn_export_pdf = dpg.add_button(label="Export to PDF", callback=self._export_attendance_report_pdf, width=-1)
@@ -813,7 +819,7 @@ class BridgeApp:
                     dpg.add_table_column(label="Fridays")
     
     def _load_available_dates(self):
-        """Load available dates for the selected month/year into the date dropdown."""
+        """Load available dates for the selected month/year."""
         month_names = ["January", "February", "March", "April", "May", "June",
                       "July", "August", "September", "October", "November", "December"]
         month_map = {name: i + 1 for i, name in enumerate(month_names)}
@@ -829,7 +835,7 @@ class BridgeApp:
         thursday_dates = month_record.get('thursdays', [])
         friday_dates = month_record.get('fridays', [])
         
-        # Build date options
+        # Build date options for logging (no longer displayed in UI)
         date_options = ["All Dates"]
         
         for date_str in thursday_dates:
@@ -848,10 +854,7 @@ class BridgeApp:
                 display = f"Fri {month}/{day}"
                 date_options.append(display)
         
-        # Update the dropdown
-        if dpg.does_item_exist("report_specific_date"):
-            dpg.configure_item("report_specific_date", items=date_options)
-            dpg.set_value("report_specific_date", "All Dates")
+        # Note: This method is now a no-op as the specific date filter has been removed
     
     def _generate_attendance_report(self):
         """Generate attendance report based on filters."""
@@ -863,7 +866,6 @@ class BridgeApp:
         selected_year = int(dpg.get_value("report_year"))
         day_filter = dpg.get_value("report_day_filter") if dpg.does_item_exist("report_day_filter") else "All"
         attendance_filter = dpg.get_value("report_attendance_filter") if dpg.does_item_exist("report_attendance_filter") else "All"
-        specific_date = dpg.get_value("report_specific_date") if dpg.does_item_exist("report_specific_date") else "All Dates"
         
         if not self.db:
             return
@@ -880,30 +882,6 @@ class BridgeApp:
             month_record = self.db.get_or_create_month(selected_month, selected_year)
             thursday_dates = month_record.get('thursdays', [])
             friday_dates = month_record.get('fridays', [])
-            
-            # Parse specific date filter if selected
-            specific_date_str = None
-            specific_day_type = None
-            if specific_date != "All Dates":
-                # Parse format like "Thu 02/15" or "Fri 02/16"
-                parts = specific_date.split()
-                if len(parts) == 2:
-                    specific_day_type = parts[0]  # "Thu" or "Fri"
-                    date_parts = parts[1].split('/')
-                    if len(date_parts) == 2:
-                        mm, dd = date_parts
-                        # Find the matching date_str in YYYYMMDD format
-                        target_prefix = f"{selected_year}{mm.zfill(2)}{dd.zfill(2)}"
-                        if specific_day_type == "Thu":
-                            for d in thursday_dates:
-                                if d.startswith(target_prefix):
-                                    specific_date_str = d
-                                    break
-                        elif specific_day_type == "Fri":
-                            for d in friday_dates:
-                                if d.startswith(target_prefix):
-                                    specific_date_str = d
-                                    break
             
             # Calculate totals by day and filter records based on attendance
             thursday_totals = {}
@@ -923,60 +901,29 @@ class BridgeApp:
                 fridays_attended = sum(1 for i, present in enumerate(att_fridays) 
                                       if present and i < len(friday_dates)) if record.get('play_fridays') else 0
                 
-                # Apply specific date filter
-                if specific_date_str:
-                    if specific_day_type == "Thu":
-                        # Only check if attended on this specific Thursday
-                        if record.get('play_thursdays'):
-                            try:
-                                date_idx = thursday_dates.index(specific_date_str)
-                                attended_this_date = att_thursdays[date_idx] if date_idx < len(att_thursdays) else False
-                                if attendance_filter == "Attending" and not attended_this_date:
-                                    continue
-                                if attendance_filter == "Non-attended" and attended_this_date:
-                                    continue
-                            except ValueError:
-                                continue  # Date not in user's play days
-                        else:
-                            continue  # User doesn't play Thursdays
-                    elif specific_day_type == "Fri":
-                        # Only check if attended on this specific Friday
-                        if record.get('play_fridays'):
-                            try:
-                                date_idx = friday_dates.index(specific_date_str)
-                                attended_this_date = att_fridays[date_idx] if date_idx < len(att_fridays) else False
-                                if attendance_filter == "Attending" and not attended_this_date:
-                                    continue
-                                if attendance_filter == "Non-attended" and attended_this_date:
-                                    continue
-                            except ValueError:
-                                continue  # Date not in user's play days
-                        else:
-                            continue  # User doesn't play Fridays
-                else:
-                    # Apply attendance filter across all dates
-                    if attendance_filter == "Attending":
-                        # Must have attended at least one day
-                        if day_filter == "All":
-                            if thursdays_attended == 0 and fridays_attended == 0:
-                                continue
-                        elif day_filter == "Thursday":
-                            if thursdays_attended == 0:
-                                continue
-                        elif day_filter == "Friday":
-                            if fridays_attended == 0:
-                                continue
-                    elif attendance_filter == "Non-attended":
-                        # Must not have attended any days
-                        if day_filter == "All":
-                            if thursdays_attended > 0 or fridays_attended > 0:
-                                continue
-                        elif day_filter == "Thursday":
-                            if thursdays_attended > 0:
-                                continue
-                        elif day_filter == "Friday":
-                            if fridays_attended > 0:
-                                continue
+                # Apply attendance filter across all dates
+                if attendance_filter == "Attending":
+                    # Must have attended at least one day
+                    if day_filter == "All":
+                        if thursdays_attended == 0 and fridays_attended == 0:
+                            continue
+                    elif day_filter == "Thursday":
+                        if thursdays_attended == 0:
+                            continue
+                    elif day_filter == "Friday":
+                        if fridays_attended == 0:
+                            continue
+                elif attendance_filter == "Non-attended":
+                    # Must not have attended any days
+                    if day_filter == "All":
+                        if thursdays_attended > 0 or fridays_attended > 0:
+                            continue
+                    elif day_filter == "Thursday":
+                        if thursdays_attended > 0:
+                            continue
+                    elif day_filter == "Friday":
+                        if fridays_attended > 0:
+                            continue
                 
                 filtered_report.append(record)
             
@@ -1011,11 +958,6 @@ class BridgeApp:
             dpg.add_text(f"Attendance Report - {month_names[selected_month - 1]} {selected_year}", 
                         color=(100, 200, 255))
             
-            # Show specific date info if filtered
-            if specific_date != "All Dates":
-                dpg.add_text(f"Filtered by: {specific_date}", color=(255, 200, 100))
-                dpg.add_text(f"Attendance Filter: {attendance_filter}", color=(255, 200, 100))
-            
             dpg.add_spacer(height=10)
             
             if day_filter in ["All", "Thursday"]:
@@ -1044,15 +986,6 @@ class BridgeApp:
             # Determine which dates to show based on filter
             show_thursdays = day_filter in ["All", "Thursday"]
             show_fridays = day_filter in ["All", "Friday"]
-            
-            # If specific date is selected, only show that date column
-            if specific_date_str:
-                if specific_day_type == "Thu":
-                    show_thursdays = True
-                    show_fridays = False
-                elif specific_day_type == "Fri":
-                    show_thursdays = False
-                    show_fridays = True
             
             # Calculate total columns needed
             num_thursdays = len(thursday_dates) if show_thursdays else 0
@@ -1279,6 +1212,10 @@ class BridgeApp:
                               width=-1)
                 
                 dpg.add_spacer(height=10)
+                btn_export_csv = dpg.add_button(label="Save to CSV", callback=self._export_all_users_csv, width=-1)
+                dpg.bind_item_theme(btn_export_csv, self.button_themes['success'])
+                
+                dpg.add_spacer(height=10)
                 if HAS_REPORTLAB:
                     dpg.add_button(label="Export to PDF", callback=lambda: self._export_all_users_pdf(),
                                   width=-1)
@@ -1442,6 +1379,72 @@ class BridgeApp:
                     dpg.add_text(user.get('days', ''))
                     dpg.add_text(user.get('contact_pref', 'None'))
     
+    def _export_all_users_csv(self):
+        """Export all users report to CSV with headers."""
+        active_only = dpg.get_value("all_users_active_only") if dpg.does_item_exist("all_users_active_only") else True
+        day_filter = dpg.get_value("all_users_day_filter") if dpg.does_item_exist("all_users_day_filter") else "All"
+        
+        play_thursdays = None
+        play_fridays = None
+        
+        if day_filter == "Thursdays Only":
+            play_thursdays = True
+        elif day_filter == "Fridays Only":
+            play_fridays = True
+        
+        users = self.db.get_all_users(active_only=active_only)
+        
+        # Apply day preference filters
+        if play_thursdays is not None:
+            users = [u for u in users if u.get('play_thursdays') == play_thursdays]
+        if play_fridays is not None:
+            users = [u for u in users if u.get('play_fridays') == play_fridays]
+        
+        # Build CSV headers
+        headers = ["ID", "First Name", "Last Name", "Phone", "Email", "Active", "Days", "Contact Pref"]
+        
+        # Build CSV content
+        csv_lines = [",".join(headers)]
+        
+        for user in users:
+            days = []
+            if user.get('play_thursdays'):
+                days.append("Thu")
+            if user.get('play_fridays'):
+                days.append("Fri")
+            
+            contact_pref = []
+            if user.get('prefer_email'):
+                contact_pref.append("Email")
+            elif user.get('prefer_phone'):
+                contact_pref.append("Phone")
+            elif user.get('prefer_text'):
+                contact_pref.append("Text")
+            
+            row = [
+                str(user.get('id', '')),
+                f'"{user.get("first", "")}"',
+                f'"{user.get("last", "")}"',
+                f'"{user.get("phone", "")}"',
+                f'"{user.get("email", "")}"',
+                "Yes" if user.get('active', True) else "No",
+                "/".join(days),
+                ", ".join(contact_pref) if contact_pref else "None"
+            ]
+            csv_lines.append(",".join(row))
+        
+        # Create filename
+        active_name = "Active" if active_only else "All"
+        day_filter_name = day_filter.replace(" ", "_").replace("Only", "Only")
+        filename = f"users_{active_name}_{day_filter_name}.csv"
+        
+        # Write CSV file
+        with open(filename, 'w') as f:
+            f.write('\n'.join(csv_lines) + '\n')
+        
+        with dpg.window(label="Success", width=300, pos=(150, 150)):
+            dpg.add_text(f"CSV exported successfully: {filename}")
+    
     def _export_all_users_pdf(self):
         """Export all users report to PDF."""
         if not HAS_REPORTLAB:
@@ -1542,6 +1545,125 @@ class BridgeApp:
             dpg.add_text("- User: Stores player info and preferences")
             dpg.add_text("- Attendance: Tracks actual attendance")
 
+    def _export_attendance_report_csv(self):
+        """Export the filtered attendance report to CSV with headers."""
+        month_names = ["January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "October", "November", "December"]
+        month_map = {name: i + 1 for i, name in enumerate(month_names)}
+        
+        selected_month = month_map.get(dpg.get_value("report_month"), date.today().month)
+        selected_year = int(dpg.get_value("report_year"))
+        day_filter = dpg.get_value("report_day_filter") if dpg.does_item_exist("report_day_filter") else "All"
+        attendance_filter = dpg.get_value("report_attendance_filter") if dpg.does_item_exist("report_attendance_filter") else "All"
+        
+        if not self.db:
+            return
+        
+        # Get the report data
+        report = self.db.get_attendance_report(month=selected_month, year=selected_year)
+        
+        # Get month record to find all dates
+        month_record = self.db.get_or_create_month(selected_month, selected_year)
+        thursday_dates = month_record.get('thursdays', [])
+        friday_dates = month_record.get('fridays', [])
+        
+        # Calculate totals by day and filter records based on attendance
+        filtered_report = []
+        for record in report:
+            att_thursdays = record.get('att_thursdays', [])
+            att_fridays = record.get('att_fridays', [])
+            
+            thursdays_attended = sum(1 for i, present in enumerate(att_thursdays) 
+                                    if present and i < len(thursday_dates)) if record.get('play_thursdays') else 0
+            fridays_attended = sum(1 for i, present in enumerate(att_fridays) 
+                                  if present and i < len(friday_dates)) if record.get('play_fridays') else 0
+            
+            if attendance_filter == "Attending":
+                if day_filter == "All":
+                    if thursdays_attended == 0 and fridays_attended == 0:
+                        continue
+                elif day_filter == "Thursday":
+                    if thursdays_attended == 0:
+                        continue
+                elif day_filter == "Friday":
+                    if fridays_attended == 0:
+                        continue
+            elif attendance_filter == "Non-attended":
+                if day_filter == "All":
+                    if thursdays_attended > 0 or fridays_attended > 0:
+                        continue
+                elif day_filter == "Thursday":
+                    if thursdays_attended > 0:
+                        continue
+                elif day_filter == "Friday":
+                    if fridays_attended > 0:
+                        continue
+            
+            filtered_report.append(record)
+        
+        # Sort by last name, then first name
+        filtered_report.sort(key=lambda r: (r.get('last', '').lower(), r.get('first', '').lower()))
+        
+        # Build CSV headers
+        headers = ["Name", "Phone"]
+        if day_filter in ["All", "Thursday"]:
+            for date_str in thursday_dates:
+                if len(date_str) >= 8:
+                    month_day = f"{date_str[4:6]}/{date_str[6:8]}"
+                    headers.append(f"Thu {month_day}")
+        if day_filter in ["All", "Friday"]:
+            for date_str in friday_dates:
+                if len(date_str) >= 8:
+                    month_day = f"{date_str[4:6]}/{date_str[6:8]}"
+                    headers.append(f"Fri {month_day}")
+        
+        # Build CSV content
+        csv_lines = [",".join(headers)]
+        
+        for record in filtered_report:
+            row = [f'"{record.get("last", "")}, {record.get("first", "")}"', 
+                   f'"{record.get("phone", "")}"']
+            
+            if day_filter in ["All", "Thursday"]:
+                att_thursdays = record.get('att_thursdays', [])
+                for date_str in thursday_dates:
+                    if len(date_str) >= 8:
+                        try:
+                            idx = thursday_dates.index(date_str)
+                            present = att_thursdays[idx] if idx < len(att_thursdays) else False
+                            row.append("X" if present else "")
+                        except ValueError:
+                            row.append("")
+                    else:
+                        row.append("")
+            
+            if day_filter in ["All", "Friday"]:
+                att_fridays = record.get('att_fridays', [])
+                for date_str in friday_dates:
+                    if len(date_str) >= 8:
+                        try:
+                            idx = friday_dates.index(date_str)
+                            present = att_fridays[idx] if idx < len(att_fridays) else False
+                            row.append("X" if present else "")
+                        except ValueError:
+                            row.append("")
+                    else:
+                        row.append("")
+            
+            csv_lines.append(",".join(row))
+        
+        # Create filename
+        month_name = date(selected_year, selected_month, 1).strftime('%B')
+        day_filter_suffix = day_filter.lower().replace(" ", "_")
+        filename = f"attendance_{month_name}_{selected_year}_{day_filter_suffix}.csv"
+        
+        # Write CSV file
+        with open(filename, 'w') as f:
+            f.write('\n'.join(csv_lines) + '\n')
+        
+        with dpg.window(label="Success", width=300, pos=(150, 150)):
+            dpg.add_text(f"CSV exported successfully: {filename}")
+    
     def _export_attendance_report_pdf(self):
         """Export the filtered attendance report to PDF."""
         if not HAS_REPORTLAB:

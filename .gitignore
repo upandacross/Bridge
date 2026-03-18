@@ -10,3 +10,9 @@ bridge_app.log
 
 # Virtual environments
 .venv
+
+# temp files
+.~lock*
+
+# generated csv files
+*.csv
