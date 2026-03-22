@@ -194,7 +194,7 @@ def format_player_card_from_template(card: Dict, template_path: str = "PlayerCar
     Format a player card using the PlayerCardTemplate.html as a base.
     
     This function parses the HTML template and replaces placeholder cells
-    with the actual player data.
+    with the actual player data, including Total and Name rows.
     
     Args:
         card: Player card dictionary from compute_player_card()
@@ -228,28 +228,33 @@ def format_player_card_from_template(card: Dict, template_path: str = "PlayerCar
     # Player number for the 'N' field (which displays the actual player number)
     player_num = card.get('player', 0)
     
-    # Get header rows from template (keep first 2 rows: Player header and Round/Table/Partner header)
-    # Row 1: Header with "Player" and "N" - replace "N" with player number
-    # Row 2: Header with "Round", "Table", "Partner", "Score"
+    # Get header rows from template
+    # Row 0: Player header with "N" placeholder
+    # Row 1: Table header with "M" placeholder  
+    # Row 2: Round/Table/Partner header
+    # Rows 3-10: Empty data rows (8 rows for games)
+    # Row 11: Total row
+    # Row 12: Name row
+    # Rows 13+: Empty footer rows
     
     # Build the first header row with actual player number in the N field
-    # Need to replace the "N" placeholder in the template's first row
-    # The template's first row has <p>N</p> that we need to replace with the player number
-    
-    # Get the first row from template (Player header with N placeholder)
     if len(all_rows) >= 1:
-        # Replace the <p>N</p> in the first row with the actual player number
         first_row_original = all_rows[0][0] + all_rows[0][1] + all_rows[0][2]
-        # Replace <p>N</p> with the player number
         header_row1 = first_row_original.replace('<p>N</p>', f'<p>{player_num}</p>')
     else:
         header_row1 = build_header_row(player_num)
     
-    # Get the second row from template (Round/Table/Partner header)
+    # Get the second row from template (Table header with M placeholder)
     if len(all_rows) >= 2:
         second_row_original = all_rows[1][0] + all_rows[1][1] + all_rows[1][2]
     else:
         second_row_original = ''
+    
+    # Get the third row from template (Round/Table/Partner header)
+    if len(all_rows) >= 3:
+        third_row_original = all_rows[2][0] + all_rows[2][1] + all_rows[2][2]
+    else:
+        third_row_original = ''
     
     # Build the data rows with actual game information
     data_rows_html = []
@@ -261,32 +266,25 @@ def format_player_card_from_template(card: Dict, template_path: str = "PlayerCar
         data_row = build_data_row(i + 1, game_num, table_num, partner, player_num)
         data_rows_html.append(data_row)
     
-    # Get the Total row from template (it's after the empty data rows in the template)
-    # The template has 8 empty rows followed by a Total row
+    # Get the Total row from template (row 11 in the template)
     total_row_original = None
-    if len(all_rows) >= 11:
-        # The Total row should be around index 10 (0-indexed, after 8 empty rows)
-        # Row 0: Player header, Row 1: Round/Table/Partner header, Rows 2-9: empty, Row 10: Total
-        total_row_original = all_rows[10][0] + all_rows[10][1] + all_rows[10][2]
-    
-    # Get the Name row from template
-    name_row_original = None
     if len(all_rows) >= 12:
-        name_row_original = all_rows[11][0] + all_rows[11][1] + all_rows[11][2]
+        total_row_original = all_rows[11][0] + all_rows[11][1] + all_rows[11][2]
+    
+    # Get the Name row from template (row 12 in the template)
+    name_row_original = None
+    if len(all_rows) >= 13:
+        name_row_original = all_rows[12][0] + all_rows[12][1] + all_rows[12][2]
     
     # Get empty data rows from template (rows 3-10 in original template)
     # These are the blank rows that we need to keep for structure
     empty_rows_html = []
-    for i in range(2, min(10, len(all_rows))):
-        # Check if this row has the correct class
+    for i in range(3, min(11, len(all_rows))):
         row_content = all_rows[i][0] + all_rows[i][1] + all_rows[i][2]
-        if 'class="row-ro1"' in row_content:
-            empty_rows_html.append(row_content)
-        elif i < 10:  # If we don't have enough, add blank rows
-            empty_rows_html.append('<tr class="row-ro1"><td style="text-align:left;width:0.889in; " class="cell-ce2"> </td><td style="text-align:left;width:0.889in; " class="cell-ce2"> </td><td style="text-align:left;width:0.889in; " class="cell-ce2"> </td><td style="text-align:left;width:0.25in; " class="cell-ce8"> </td><td style="text-align:left;width:0.25in; " class="cell-ce8"> </td><td style="text-align:left;width:0.25in; " class="cell-ce8"> </td><td style="text-align:left;width:0.25in; " class="cell-ce8"> </td><td style="text-align:left;width:0.25in; " class="cell-ce8"> </td><td style="text-align:left;width:0.25in; " class="cell-ce2"> </td><td style="text-align:left;width:0.889in; " class="cell-ce3"> </td></tr>')
+        empty_rows_html.append(row_content)
     
-    # Combine everything - keep template structure but replace header row 1
-    new_table_content = header_row1 + '\n' + second_row_original + '\n'
+    # Combine everything - keep template structure
+    new_table_content = header_row1 + '\n' + second_row_original + '\n' + third_row_original + '\n'
     
     # Add game data rows
     for data_row in data_rows_html:
@@ -296,7 +294,13 @@ def format_player_card_from_template(card: Dict, template_path: str = "PlayerCar
     for empty_row in empty_rows_html[len(data_rows_html):]:
         new_table_content += empty_row + '\n'
     
-    # Add only Name row (Total row is already in template after empty rows)
+    # Add Total row
+    if total_row_original:
+        new_table_content += total_row_original + '\n'
+    else:
+        new_table_content += build_total_row(len(data_rows_html)) + '\n'
+    
+    # Add Name row
     if name_row_original:
         # Replace the "Name:" with "Name: X" where X is the player name or number
         if player_name:
@@ -304,9 +308,14 @@ def format_player_card_from_template(card: Dict, template_path: str = "PlayerCar
         else:
             name_row = name_row_original.replace('<p>Name:</p>', f'<p>Name: {player_num}</p>')
     else:
-        name_row = build_name_row(player_name)
+        name_row = build_name_row(player_name if player_name else str(player_num))
     
     new_table_content += name_row + '\n'
+    
+    # Add any remaining footer rows from template
+    for i in range(13, len(all_rows)):
+        footer_row = all_rows[i][0] + all_rows[i][1] + all_rows[i][2]
+        new_table_content += footer_row + '\n'
     
     # Extract the original table opening tag
     original_table_start = template_content[table_start:table_match.end()]
