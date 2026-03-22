@@ -1,5 +1,5 @@
 Validation Timestamp,Database Path,Total Games,Valid Games,Invalid Games,Total Records,Total Errors
-2026-03-22T04:36:59.922460,/home/bren/Home/Projects/bridge/bridge.db,25,25,0,372,0
+2026-03-22T04:41:36.869755,/home/bren/Home/Projects/bridge/bridge.db,25,25,0,372,0
 
 Date,Day Type,Total Records,Valid,Errors
 20260205,Thursday,24,Yes,
