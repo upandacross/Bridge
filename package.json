@@ -1,5 +1,8 @@
 {
   "dependencies": {
     "uv": "^1.4.0"
+  },
+  "devDependencies": {
+    "@playwright/mcp": "^0.0.68"
   }
 }
