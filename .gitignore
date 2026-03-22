@@ -14,5 +14,7 @@ bridge_app.log
 # temp files
 .~lock*
 
-# generated csv files
+# generated files
 *.csv
+*.html
+*.pdf

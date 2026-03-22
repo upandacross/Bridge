@@ -152,8 +152,8 @@ class PlayerCardGenerator:
         
         print(f"\n✓ Exported to {filename}")
     
-    def export_pdf(self, filename: str = "player_cards.pdf", cards_per_page: int = 4):
-        """Export player cards to PDF format (letter size 8.5x11)."""
+    def export_pdf(self, filename: str = "player_cards.pdf", cards_per_page: int = 6):
+        """Export player cards to PDF format (A4 landscape with 2.6" card height)."""
         try:
             from weasyprint import HTML, CSS
         except ImportError:
@@ -169,16 +169,11 @@ class PlayerCardGenerator:
         HTML(string='\n'.join(html_content)).write_pdf(filename)
         print(f"✓ Exported to {filename}")
     
-    def _generate_html_content(self, cards_per_page: int = 4) -> list:
-        """Generate HTML content for player cards."""
-        # Calculate grid dimensions - use 3 columns for more cards per page
-        if cards_per_page <= 2:
-            cols = 1
-        elif cards_per_page <= 6:
-            cols = 2
-        else:
-            cols = 3
-        rows = (cards_per_page + cols - 1) // cols
+    def _generate_html_content(self, cards_per_page: int = 6) -> list:
+        """Generate HTML content for player cards (fixed 2.6" card height)."""
+        # Fixed layout: 2 columns x 3 rows = 6 cards per page with 2.6" card height
+        cols = 2
+        rows = 3
         
         html_content = []
         html_content.append("<!DOCTYPE html>")
@@ -187,16 +182,27 @@ class PlayerCardGenerator:
         html_content.append("<meta charset='UTF-8'>")
         html_content.append("<title>Bridge Player Cards</title>")
         html_content.append("<style>")
-        # Adjust gap and padding based on cards per page
-        gap = "0.08in" if cards_per_page >= 8 else "0.15in"
-        card_padding = "0.08in" if cards_per_page >= 8 else "0.15in"
-        header_margin = "0.05in" if cards_per_page >= 8 else "0.1in"
-        subheader_margin = "0.04in" if cards_per_page >= 8 else "0.08in"
+        
+        # Fixed layout for 2x3 cards with ~3" card height on A4 landscape
+        # Available height after margins: 8.27" - 0.7" = 7.57"
+        # With 3" card height and reduced gap: 3 * 3" + 2 * 0.05" = 9.1" (overflows, but browser will adjust)
+        # Let's use minimal gap and margins to maximize card height
+        page_size = "11.69in 8.27in"  # A4 landscape
+        gap = "0.04in"
+        card_padding = "0.18in"
+        header_margin = "0.03in"
+        subheader_margin = "0.02in"
+        page_margin = "0.33in"
+        card_font = "9pt"
+        header_font = "10pt"
+        subheader_font = "9pt"
+        table_font = "9pt"
+        table_padding = "0.04in 0.05in"
         
         html_content.append(f"""
 @page {{
-    size: 8.5in 11in;
-    margin: 0.5in;
+    size: {page_size};
+    margin: {page_margin};
 }}
 * {{
     box-sizing: border-box;
@@ -227,18 +233,18 @@ body {{
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-size: 9pt;
+    font-size: {card_font};
 }}
 .card-header {{
-    font-size: 12pt;
+    font-size: {header_font};
     font-weight: bold;
     text-align: center;
     margin-bottom: {header_margin};
     border-bottom: 1px solid #333;
-    padding-bottom: 0.03in;
+    padding-bottom: 0.02in;
 }}
 .card-subheader {{
-    font-size: 10pt;
+    font-size: {subheader_font};
     font-weight: bold;
     text-align: center;
     margin-bottom: {subheader_margin};
@@ -246,13 +252,12 @@ body {{
 .card-table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 10pt;
-    flex-grow: 1;
+    font-size: {table_font};
 }}
 .card-table th,
 .card-table td {{
     border: 1px solid #666;
-    padding: 0.04in 0.05in;
+    padding: {table_padding};
     text-align: center;
 }}
 .card-table th {{
@@ -344,7 +349,7 @@ body {{
         
         return html_content
     
-    def export_html(self, filename: str = "player_cards.html", cards_per_page: int = 4):
+    def export_html(self, filename: str = "player_cards.html", cards_per_page: int = 6):
         """Export player cards to HTML format - compact matrix for 8.5x11 printing."""
         html_content = self._generate_html_content(cards_per_page)
         
@@ -528,14 +533,6 @@ def main():
         action="store_true",
         help="Skip console output (only export files)"
     )
-    parser.add_argument(
-        "--cards-per-page",
-        type=int,
-        default=4,
-        choices=[1, 2, 3, 4, 6, 8, 9, 12, 15],
-        help="Number of player cards per printed page (default: 4)"
-    )
-    
     args = parser.parse_args()
     
     # Load player names if provided
@@ -564,17 +561,17 @@ def main():
         generator.display_cards()
         generator.display_summary()
     
-    # Export to files
+    # Export to files (cards_per_page=6 for fixed 2.6" card height on A4)
     generator.export_csv(args.output_csv)
-    generator.export_html(args.output_html, cards_per_page=args.cards_per_page)
+    generator.export_html(args.output_html, cards_per_page=6)
     
     # Export to PDF if requested
     if args.output_pdf:
-        generator.export_pdf(args.output_pdf, cards_per_page=args.cards_per_page)
+        generator.export_pdf(args.output_pdf, cards_per_page=6)
     
     # Export template cards if requested
     if args.output_template:
-        generator.export_template_cards(args.output_template, cards_per_page=args.cards_per_page, player_names=generator.name_map)
+        generator.export_template_cards(args.output_template, cards_per_page=6, player_names=generator.name_map)
     
     print("\n✓ Player card generation complete!")
 
