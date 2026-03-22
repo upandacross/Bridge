@@ -325,6 +325,10 @@ body {{
                         else:
                             partner_display = self.name_map.get(partner_num, f"Player #{partner_num}") if partner_num else 'N/A'
                         html_content.append(f"<tr><td>{game['game']}</td><td>{game['table']}</td><td>{partner_display}</td><td></td><td></td><td></td><td></td><td></td></tr>")
+                    # Add Total row
+                    html_content.append("<tr><td colspan='3' style='font-weight:bold; text-align:right;'>Total:</td><td></td><td></td><td></td><td></td><td></td></tr>")
+                    # Add Player row - single box in first column styled like Total
+                    html_content.append("<tr><td style='font-weight:bold; text-align:right; border-top: 1px solid #666;'>Player:</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>")
                     html_content.append("</table>")
                 
                 html_content.append("</div>")
