@@ -993,12 +993,12 @@ class BridgeApp:
             max_dates = max(num_thursdays, num_fridays)
             
             with dpg.table(tag="attendance_table", header_row=True, policy=dpg.mvTable_SizingFixedFit,
-                          scrollX=True, scrollY=True, row_background=True,
-                          borders_innerH=True, borders_outerH=True, borders_innerV=True,
-                          borders_outerV=True):
-                # Fixed columns for name and day type
-                dpg.add_table_column(label="Name", width_fixed=True, init_width_or_weight=150)
-                dpg.add_table_column(label="Type", width_fixed=True, init_width_or_weight=80)
+                           scrollX=True, scrollY=True, row_background=True,
+                           borders_innerH=True, borders_outerH=True, borders_innerV=True,
+                           borders_outerV=True):
+                # Fixed columns for name and day type - reduced widths
+                dpg.add_table_column(label="Name", width_fixed=True, init_width_or_weight=120)
+                dpg.add_table_column(label="Type", width_fixed=True, init_width_or_weight=60)
                 
                 # Date columns - combine Thursday and Friday dates
                 all_dates = []
@@ -1016,9 +1016,9 @@ class BridgeApp:
                 # Sort by date
                 all_dates.sort(key=lambda x: x[2])
                 
-                # Add date columns
+                # Add date columns - reduced width for more compact display
                 for day_type, month_day, date_str in all_dates:
-                    dpg.add_table_column(label=f"{day_type} {month_day}", width_fixed=True, init_width_or_weight=80)
+                    dpg.add_table_column(label=f"{day_type} {month_day}", width_fixed=True, init_width_or_weight=60)
                 
                 # Add header row with totals
                 with dpg.table_row():
@@ -1045,15 +1045,17 @@ class BridgeApp:
                     # Add Thursday row if applicable
                     if record.get('play_thursdays') and show_thursdays:
                         att_thursdays = record.get('att_thursdays', [])
+                        # Use thursdays_list from the record which has the same dates used to build att_thursdays
+                        thursday_dates_from_record = record.get('thursdays_list', [])
                         with dpg.table_row():
                             dpg.add_text(name)
                             dpg.add_text("Thursday")
                             # Add attendance for each Thursday date
                             for day_type, month_day, date_str in all_dates:
                                 if day_type == 'Thu':
-                                    # Find index of this date in thursday_dates
+                                    # Find index of this date in thursday_dates from record
                                     try:
-                                        idx = thursday_dates.index(date_str)
+                                        idx = thursday_dates_from_record.index(date_str)
                                         present = att_thursdays[idx] if idx < len(att_thursdays) else False
                                         dpg.add_text("X" if present else "")
                                     except ValueError:
@@ -1064,15 +1066,17 @@ class BridgeApp:
                     # Add Friday row if applicable
                     if record.get('play_fridays') and show_fridays:
                         att_fridays = record.get('att_fridays', [])
+                        # Use fridays_list from the record which has the same dates used to build att_fridays
+                        friday_dates_from_record = record.get('fridays_list', [])
                         with dpg.table_row():
                             dpg.add_text(name)
                             dpg.add_text("Friday")
                             # Add attendance for each Friday date
                             for day_type, month_day, date_str in all_dates:
                                 if day_type == 'Fri':
-                                    # Find index of this date in friday_dates
+                                    # Find index of this date in friday_dates from record
                                     try:
-                                        idx = friday_dates.index(date_str)
+                                        idx = friday_dates_from_record.index(date_str)
                                         present = att_fridays[idx] if idx < len(att_fridays) else False
                                         dpg.add_text("X" if present else "")
                                     except ValueError:
@@ -1561,22 +1565,19 @@ class BridgeApp:
         
         # Get the report data
         report = self.db.get_attendance_report(month=selected_month, year=selected_year)
-        
-        # Get month record to find all dates
-        month_record = self.db.get_or_create_month(selected_month, selected_year)
-        thursday_dates = month_record.get('thursdays', [])
-        friday_dates = month_record.get('fridays', [])
-        
         # Calculate totals by day and filter records based on attendance
+        # Use dates from the report data (thursdays_list and fridays_list from each record)
         filtered_report = []
         for record in report:
             att_thursdays = record.get('att_thursdays', [])
             att_fridays = record.get('att_fridays', [])
+            thursdays_list = record.get('thursdays_list', [])
+            fridays_list = record.get('fridays_list', [])
             
             thursdays_attended = sum(1 for i, present in enumerate(att_thursdays) 
-                                    if present and i < len(thursday_dates)) if record.get('play_thursdays') else 0
+                                    if present and i < len(thursdays_list)) if record.get('play_thursdays') else 0
             fridays_attended = sum(1 for i, present in enumerate(att_fridays) 
-                                  if present and i < len(friday_dates)) if record.get('play_fridays') else 0
+                                  if present and i < len(fridays_list)) if record.get('play_fridays') else 0
             
             if attendance_filter == "Attending":
                 if day_filter == "All":
@@ -1604,15 +1605,26 @@ class BridgeApp:
         # Sort by last name, then first name
         filtered_report.sort(key=lambda r: (r.get('last', '').lower(), r.get('first', '').lower()))
         
-        # Build CSV headers
+        # Build CSV headers using dates from the first record's thursdays_list and fridays_list
         headers = ["Name", "Phone"]
+        
+        # Get the combined date list for the header (from filtered records)
+        # We need to use the dates that were used to build the attendance data
+        combined_thursdays = []
+        combined_fridays = []
+        for record in filtered_report:
+            combined_thursdays = record.get('thursdays_list', [])
+            combined_fridays = record.get('fridays_list', [])
+            if combined_thursdays or combined_fridays:
+                break
+        
         if day_filter in ["All", "Thursday"]:
-            for date_str in thursday_dates:
+            for date_str in combined_thursdays:
                 if len(date_str) >= 8:
                     month_day = f"{date_str[4:6]}/{date_str[6:8]}"
                     headers.append(f"Thu {month_day}")
         if day_filter in ["All", "Friday"]:
-            for date_str in friday_dates:
+            for date_str in combined_fridays:
                 if len(date_str) >= 8:
                     month_day = f"{date_str[4:6]}/{date_str[6:8]}"
                     headers.append(f"Fri {month_day}")
@@ -1626,10 +1638,11 @@ class BridgeApp:
             
             if day_filter in ["All", "Thursday"]:
                 att_thursdays = record.get('att_thursdays', [])
-                for date_str in thursday_dates:
+                thursdays_list = record.get('thursdays_list', [])
+                for date_str in combined_thursdays:
                     if len(date_str) >= 8:
                         try:
-                            idx = thursday_dates.index(date_str)
+                            idx = thursdays_list.index(date_str)
                             present = att_thursdays[idx] if idx < len(att_thursdays) else False
                             row.append("X" if present else "")
                         except ValueError:
@@ -1639,10 +1652,11 @@ class BridgeApp:
             
             if day_filter in ["All", "Friday"]:
                 att_fridays = record.get('att_fridays', [])
-                for date_str in friday_dates:
+                fridays_list = record.get('fridays_list', [])
+                for date_str in combined_fridays:
                     if len(date_str) >= 8:
                         try:
-                            idx = friday_dates.index(date_str)
+                            idx = fridays_list.index(date_str)
                             present = att_fridays[idx] if idx < len(att_fridays) else False
                             row.append("X" if present else "")
                         except ValueError:
@@ -2323,21 +2337,21 @@ class BridgeApp:
             dpg.add_spacer(height=10)
             
             with dpg.table(header_row=True, policy=dpg.mvTable_SizingFixedFit,
-                          scrollX=True, scrollY=True, row_background=True,
-                          borders_innerH=True, borders_outerH=True, borders_innerV=True,
-                          borders_outerV=True, width=800, height=500):
+                           scrollX=True, scrollY=True, row_background=True,
+                           borders_innerH=True, borders_outerH=True, borders_innerV=True,
+                           borders_outerV=True, width=600, height=400):
                 
                 # Add columns for User, Month/Year, Day, and then the dates
-                dpg.add_table_column(label="User", width_fixed=True, init_width_or_weight=150)
-                dpg.add_table_column(label="Month", width_fixed=True, init_width_or_weight=100)
-                dpg.add_table_column(label="Day", width_fixed=True, init_width_or_weight=100)
+                dpg.add_table_column(label="User", width_fixed=True, init_width_or_weight=100)
+                dpg.add_table_column(label="Month", width_fixed=True, init_width_or_weight=60)
+                dpg.add_table_column(label="Day", width_fixed=True, init_width_or_weight=50)
                 
                 # Determine max number of columns needed
                 max_dates = max(len(thursday_dates), len(friday_dates)) if (thursday_dates or friday_dates) else 0
                 
                 # Add columns for each date position
                 for i in range(max_dates):
-                    dpg.add_table_column(label=f"{i+1}", width_fixed=True, init_width_or_weight=100)
+                    dpg.add_table_column(label=f"Date {i+1}", width_fixed=True, init_width_or_weight=80)
                 
                 # Add the Thursday row if user plays Thursdays
                 if user.get('play_thursdays') and thursday_dates:
@@ -2352,7 +2366,7 @@ class BridgeApp:
                                 month_day = f"{date_str[4:6]}/{date_str[6:8]}"
                                 checked = attendance_data['thursdays'][i] if i < len(attendance_data['thursdays']) else False
                                 dpg.add_checkbox(tag=f"thursday_{i}_{user_id}", 
-                                               default_value=checked,
+                                               default_value=bool(checked),
                                                label=month_day,
                                                user_data={'day_type': 'thursday', 'index': i, 'date_str': date_str},
                                                callback=self._update_attendance_checkboxes)
@@ -2374,7 +2388,7 @@ class BridgeApp:
                                 month_day = f"{date_str[4:6]}/{date_str[6:8]}"
                                 checked = attendance_data['fridays'][i] if i < len(attendance_data['fridays']) else False
                                 dpg.add_checkbox(tag=f"friday_{i}_{user_id}", 
-                                               default_value=checked,
+                                               default_value=bool(checked),
                                                label=month_day,
                                                user_data={'day_type': 'friday', 'index': i, 'date_str': date_str},
                                                callback=self._update_attendance_checkboxes)

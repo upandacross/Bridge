@@ -4,5 +4,18 @@
 			"path": "../state_wide_assessor_demo"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"mcpServers": {
+			"exa": {
+				"command": "python",
+				"args": [
+					"-m",
+					"mcp_servers.exa_extension.server"
+				],
+				"env": {
+					"EXA_API_KEY": "cdd5ada4-38a4-4a39-aad9-72f6721e0242"
+				}
+			}
+		}
+	}
 }

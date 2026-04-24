@@ -78,15 +78,49 @@ class PlayerCardGenerator:
                         })
             else:
                 # Rounds 2+: Random partners from all players (without replacement)
-                # Create a list of all players
-                all_players = self.players.copy()
-                random.shuffle(all_players)
+                # Generate pairs and check against previous game's pairs to avoid duplicates
+                prev_pairs = set()
+                if game_num > 1:
+                    # Get pairs from game_num - 1
+                    for player_num in self.players:
+                        games = self.player_games.get(player_num, [])
+                        for game_info in games:
+                            if game_info['game'] == game_num - 1:
+                                partner = game_info['partner']
+                                prev_pair = tuple(sorted((player_num, partner)))
+                                prev_pairs.add(prev_pair)
+                                break
                 
-                # Create pairs: (0,1), (2,3), (4,5), etc.
+                # Generate pairs and check against previous game's pairs
                 pairs = []
-                for i in range(0, len(all_players), 2):
-                    if i + 1 < len(all_players):
-                        pairs.append((all_players[i], all_players[i + 1]))
+                max_attempts = 100  # Prevent infinite loop
+                attempts = 0
+                
+                while len(pairs) == 0 and attempts < max_attempts:
+                    attempts += 1
+                    # Create a list of all players
+                    all_players = self.players.copy()
+                    random.shuffle(all_players)
+                    
+                    # Create pairs: (0,1), (2,3), (4,5), etc.
+                    temp_pairs = []
+                    for i in range(0, len(all_players), 2):
+                        if i + 1 < len(all_players):
+                            # Sort pair to ensure consistent ordering for comparison
+                            pair = tuple(sorted((all_players[i], all_players[i + 1])))
+                            temp_pairs.append(pair)
+                    
+                    # Check for intersection with previous game's pairs
+                    current_pairs_set = set(temp_pairs)
+                    if not current_pairs_set.intersection(prev_pairs):
+                        # No duplicates found, keep these pairs
+                        pairs = temp_pairs
+                    else:
+                        # If there's an intersection, we need to regenerate pairs
+                        print(f"Regenerating pairs for game {game_num} due to intersection with previous game")
+                
+                if attempts >= max_attempts:
+                    print(f"Warning: Could not generate unique pairs for game {game_num} after {max_attempts} attempts")
                 
                 # Assign pairs to tables (2 pairs per table for 4-player tables)
                 for table_num in range(1, self.tables + 1):
