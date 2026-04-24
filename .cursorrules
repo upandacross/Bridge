@@ -1,0 +1,52 @@
+# Cursor Rules for All Projects in ~/Home/Projects
+
+## CodeGraph Integration
+
+When working with any project in this directory, use the CodeGraph MCP server to understand code structure and relationships efficiently.
+
+### When to Use CodeGraph
+
+1. **Understanding Code Flow**: Before making changes to complex functions or classes, use `embed_code` to build a code graph, then use `search_code` to find related symbols.
+
+2. **Impact Analysis**: Before refactoring or deleting code, use `get_impact` to understand what other parts of the codebase depend on the symbol you're changing.
+
+3. **Finding Callers**: When you need to understand how a function is used throughout the codebase, use `get_callers` to trace all call sites.
+
+4. **Code Exploration**: Instead of manually searching through files, use `search_code` to quickly locate functions, classes, and imports by name.
+
+### CodeGraph Tools Available
+
+- **embed_code**: Build code graphs for Python files
+  - Usage: `embed_code --files all` (or specify comma-separated file paths)
+  - Creates a `.codegraph.db` SQLite database in the project root
+  - Indexes functions, classes, methods, variables, and imports
+
+- **search_code**: Search for symbols by name or pattern
+  - Usage: `search_code --query function_name --type function`
+  - Supports filtering by type: function, class, method, variable, import
+
+- **get_callers**: Find all functions that call a given symbol
+  - Usage: `get_callers --symbol function_name`
+  - Returns all locations where the symbol is called
+
+- **get_impact**: Calculate the impact radius of changing a symbol
+  - Usage: `get_impact --symbol function_name`
+  - Shows all symbols that depend on the target symbol
+
+### Workflow Example
+
+1. When starting work on a feature, run: `embed_code --files all`
+2. Use `search_code` to find relevant functions and classes
+3. Use `get_impact` before making changes to understand dependencies
+4. Use `get_callers` to find all usages of a function you're modifying
+
+### Post-Commit Hook
+
+The CodeGraph database is automatically updated via post-commit hooks to keep the code graph in sync with your changes. This ensures that code exploration is always based on the latest code state.
+
+## General Guidelines
+
+- Always use CodeGraph for code exploration in this project
+- Run `embed_code --files all` when starting a new session
+- Use `get_impact` before making breaking changes
+- Refer to the code graph results to understand relationships before refactoring
