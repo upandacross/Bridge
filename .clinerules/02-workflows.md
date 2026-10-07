@@ -61,6 +61,19 @@ cd Bridge && python3 test/test_attendance_schema.py
 
 Tests verify the SQLite schema is correct and attendance data integrity holds.
 
+### Type Checking (pyright)
+
+All Python changes are validated with pyright — not just `py_compile`, which only checks syntax:
+
+```bash
+cd Bridge && uv run pyright <file.py>      # single file (the usual bar)
+cd Bridge && uv run pyright               # whole project (surfaces pre-existing debt)
+```
+
+A clean pyright run on the touched file is required. Always annotate functions you write or touch (see gotcha #13 in `03-gotchas.md`): unannotated returns widen under inference and produce false positives for every caller. When tightening a shared function's return type, also check its other consumers.
+
+`pyproject.toml` carries `pyright` as a dependency and a `[tool.pyright] extraPaths` entry for `kdeconnect` (imported at runtime via `sys.path` from the sibling phone-mcp repo).
+
 ### Validation Data
 
 `test/attendance_validation.csv` contains known-good attendance data for validation.

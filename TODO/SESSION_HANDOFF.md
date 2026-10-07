@@ -13,7 +13,7 @@ Additional work this session: SMS reminder script for declined signups; player-c
 | `.clinerules/00-critical.md` | Critical rules for the Bridge project | config | committed |
 | `.clinerules/01-architecture.md` | Architecture patterns (SQLite, DearPyGui, PyMC, simulations) | config | committed |
 | `.clinerules/02-workflows.md` | Development workflows (running scripts, testing, PDF gen) | config | committed |
-| `.clinerules/03-gotchas.md` | 12 learned gotchas from this session | config | committed |
+| `.clinerules/03-gotchas.md` | 13 learned gotchas from this session | config | committed |
 | `pyproject.toml` | Added `pymc>=5.28.5` (later `pytest>=9.1.1`) dependency | config | committed |
 | `uv.lock` | Lockfile updates for pymc/pytest | config | committed |
 | `generate_player_cards.py` | Default PDF filename `player_cards<N>.pdf`; CSV/HTML now opt-in | code | committed |

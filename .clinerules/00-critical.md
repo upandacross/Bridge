@@ -37,6 +37,7 @@ DearPyGui callbacks run on the UI thread. The database connection uses `check_sa
 - UI changes → Launch the DearPyGui app and verify the affected screen
 - Database changes → Run `test/test_attendance_schema.py`
 - Probability scripts → Run the script and check output
+- Python changes → `uv run pyright <file.py>` clean (see §10 and gotcha #13)
 - **All changes** → Present results for user review before committing
 
 ## 5. Card Encoding Convention
@@ -82,6 +83,16 @@ Work in small, reviewable steps. Pause for acknowledgment before proceeding to t
 - After diagnosing a problem and BEFORE making changes: state the root cause and planned fix, then pause
 - After each logical group of edits: summarize what happened, then pause
 - When output requires user review (simulation results, plots): STOP after presenting it
+
+## 10. Annotate Everything
+
+**MANDATORY**: Annotate every function you write or touch — parameter and return types. Prefer a `TypedDict`/dataclass over a bare `dict` for structured returns.
+
+- Validate with `uv run pyright <file.py>` (a clean run on the touched file is the bar) — **not** `py_compile`, which only checks syntax
+- Unannotated returns widen under type inference and produce **false positives in every caller**; the fix belongs in the library, never a `# type: ignore` at each call site
+- When tightening a shared function's return type, re-check **all** its consumers, not just the file you edited
+
+See gotcha #13 in `03-gotchas.md` for the full failure mode and worked example.
 
 ## When Rules Conflict
 

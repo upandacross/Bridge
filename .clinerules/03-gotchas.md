@@ -141,3 +141,42 @@ git add -u test_dir/   # stage the removal of the old path
 Then confirm with `git --no-optional-locks status --porcelain -M` — you should see `R  old -> new`, not `D old` + `?? new`.
 
 **Related**: Generated files at the new path are often gitignored (e.g. `*.csv`), so their old tracked copies show as pure deletions with no counterpart to pair against — that is expected, not a bug.
+
+## 13. Always Annotate — Unannotated Code Poisons Callers
+
+**Rule**: **Annotate every function you write or touch** — return types and parameter types. In particular, annotate any library helper whose return is a structured value (`dict`, `TypedDict`, dataclass). Do this even when the code runs fine; the cost of omission is paid by every downstream caller.
+
+**Problem**: `phone-mcp/kdeconnect.py` had **0 of 44 methods annotated**. `KDEConnect.status()` returned a dict with a nested `battery` value (`{'charge': 52, 'charging': False}`), but with no return annotation pyright widened the whole thing to `dict[str, str]`. Callers doing `status.get('battery', {}).get('charge')` then got `Cannot access attribute "get" for class "str"` — **bogus errors on correct code**, which is worse than a real error because it trains you to ignore the type checker.
+
+**Root Cause**: A type checker infers what it can see. With no declared return type, it unifies all dict values and widens to the least-surprising/common type. The imprecision originates in the **library**, not the caller — so the fix belongs there, not in a `# type: ignore` at every call site.
+
+**Symptoms that should trigger a look upstream**: a type checker claims a value is `str`/scalar when you know at runtime it's a dict/object; errors cluster on attribute access (`.get`, `[...]`, `.foo`) of a value returned by an unannotated function; the same false positive recurs across multiple call sites.
+
+**Fix**:
+1. Add proper annotations to the library — prefer a `TypedDict` (or dataclass) over a bare `dict` for structured returns:
+
+```python
+class BatteryStatus(TypedDict, total=False):
+    charge: int
+    charging: bool
+
+class DeviceStatus(TypedDict, total=False):
+    target_name: str
+    reachable: bool
+    battery: BatteryStatus
+    error: str
+
+def status(self) -> DeviceStatus: ...
+```
+
+2. Annotate the local variable when a literal is assigned non-uniform types, otherwise the inferred type of the first assignment sticks:
+
+```python
+snap: DeviceStatus = {"target_name": ...}   # not snap = {...}
+```
+
+3. For an optional `TypedDict` key, don't subscript after a truthiness check (`status['error']`) — capture it (`if err := status.get('error')`), or the checker still flags `reportTypedDictNotRequiredAccess`.
+
+**Follow-on**: making a library's return precise can **newly break its other callers** whose annotations were too loose. When you tighten a shared return type, run the checker across *all* consumers (`grep -rl "from <module> import"`), not just the file you were editing. Here `pixel_mcp.kde_status() -> dict` had to become `-> DeviceStatus`.
+
+**Validate with pyright, not `py_compile`**: `py_compile` only checks syntax. The project has pyright (`uv run pyright <file>`); use it. A clean pyright run on the touched file is the bar. (`pyproject.toml` has a `[tool.pyright] extraPaths` entry because `kdeconnect` is injected via `sys.path` at runtime.)
