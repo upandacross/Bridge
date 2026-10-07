@@ -173,7 +173,7 @@ def run_validation() -> dict:
 
 
 def save_validation_results(results: dict):
-    """Save validation results to CSV file in test_dir."""
+    """Save validation results to CSV file in the test directory."""
     output_file = TEST_DIR / "attendance_validation.csv"
     
     with open(output_file, 'w', newline='', encoding='utf-8') as f:
