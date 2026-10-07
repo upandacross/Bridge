@@ -27,9 +27,11 @@ Always-call (do not text):
   "call these instead". Use --include-always-call to text them anyway.
 
 Safety:
-  A phone-link check runs first by default and then exits without sending:
-  it reports the KDE Connect device and battery. Pass --check-phone no to
-  skip the check and proceed.
+  A phone-link check runs first by default: it reports the KDE Connect
+  device and battery. Without a message the run stops there (link check
+  only). With a message, dry-run continues to print the recipient list even
+  if the link is down; execute mode aborts if the phone is unreachable.
+  Pass --check-phone no to skip the check and proceed.
 
   Dry-run by default (prints recipients without sending). Use --execute to
   actually send. A CSV send log keys on the message hash so re-runs skip
@@ -417,7 +419,7 @@ def main() -> None:
     if args.sleep_min > args.sleep_max:
         sys.exit("--sleep-min must be <= --sleep-max")
 
-    # --- Phone link check (runs by default; always exits) ---
+    # --- Phone link check (runs by default) ---
     if args.check_phone == "yes":
         kc = KDEConnect()
         status = kc.status()
@@ -429,7 +431,15 @@ def main() -> None:
             print(f"  error: {status['error']}")
         print("Note: this confirms the desktop<->phone link, NOT cellular "
               "service or carrier delivery.")
-        return
+        print()
+        # Only the check was requested (no message) -> stop here.
+        if not args.message:
+            return
+        # In execute mode the phone must be reachable; dry-run continues
+        # regardless so the recipient list is still shown.
+        if args.execute and not reachable:
+            sys.exit(f"Phone not reachable via KDE Connect: "
+                     f"{status.get('error', 'unknown')}")
 
     # Past the check: a message is required to build the send.
     if not args.message:
@@ -495,7 +505,7 @@ def main() -> None:
         print("(dry-run - use --execute to send SMS)")
         return
 
-    # --- Verify KDE Connect ---
+    # --- Verify KDE Connect before sending ---
     kc = KDEConnect()
     status = kc.status()
     if not status.get("reachable"):

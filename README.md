@@ -121,13 +121,20 @@ instead*. Use `--include-always-call` to text them anyway.
 
 ### Phone link check
 
-By default the script checks the desktop<->phone KDE Connect link, prints
-the device and battery, and **exits without sending**. This is a
-link check only — it does **not** confirm cellular service or carrier
-delivery. Pass `--check-phone no` to skip the check and proceed.
+By default the script checks the desktop<->phone KDE Connect link and
+prints the device and battery. This is a link check only — it does **not**
+confirm cellular service or carrier delivery.
 
-Because of this default, a real dry-run or send always includes
-`--check-phone no`.
+The check no longer forces an exit when a message is given:
+
+- **Dry-run** prints the link status and then continues to the recipient
+  list, whether or not the phone is reachable.
+- **Execute** (`--execute`) aborts before sending if the phone is not
+  reachable.
+- With **no `--message`**, the run stops right after the check (a pure
+  link check).
+
+Pass `--check-phone no` to skip the check entirely and proceed.
 
 ### Delivery caveat
 
