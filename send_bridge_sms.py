@@ -405,7 +405,9 @@ def main() -> None:
     parser.add_argument("--log-file", type=Path, default=LOG_FILE_DEFAULT,
                         help=f"Send log CSV (default: {LOG_FILE_DEFAULT.name})")
     parser.add_argument("--execute", action="store_true",
-                        help="Actually send SMS (default: dry-run)")
+                        help="Actually send SMS. Without this flag the script "
+                             "runs in dry-run mode (prints recipients, sends "
+                             "nothing).")
     parser.add_argument("--check-phone", choices=["yes", "no"], default="yes",
                         help="Check KDE Connect phone link and exit before any "
                              "send. Runs by default; pass 'no' to skip "
