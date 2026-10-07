@@ -18,3 +18,8 @@ bridge_app.log
 *.csv
 *.html
 *.pdf
+*.png
+*.txt
+
+# node dependencies
+node_modules/
