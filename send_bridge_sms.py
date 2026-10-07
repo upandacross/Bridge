@@ -427,8 +427,8 @@ def main() -> None:
         print(f"KDE Connect reachable: {reachable}")
         print(f"  device: {status.get('name', 'unknown')}")
         print(f"  battery: {status.get('battery', {}).get('charge', '?')}%")
-        if status.get("error"):
-            print(f"  error: {status['error']}")
+        if err := status.get("error"):
+            print(f"  error: {err}")
         print("Note: this confirms the desktop<->phone link, NOT cellular "
               "service or carrier delivery.")
         print()

@@ -8,6 +8,7 @@ dependencies = [
     "dearpygui>=2.1.1",
     "mcp>=1.26.0",
     "pymc>=5.28.5",
+    "pyright>=1.1.414",
     "pytest>=9.1.1",
     "weasyprint>=68.1",
 ]
@@ -15,4 +16,12 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "bridge",
+]
+
+[tool.pyright]
+# KDE Connect helper is imported at runtime from the sibling phone-mcp repo
+# (send_bridge_sms.py inserts it into sys.path). Point pyright at the same
+# directory so "from kdeconnect import KDEConnect" resolves during analysis.
+extraPaths = [
+    "/home/bren/Home/Projects/HTML_CSS/precinct/phone-mcp",
 ]
