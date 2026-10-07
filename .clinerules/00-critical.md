@@ -35,7 +35,7 @@ DearPyGui callbacks run on the UI thread. The database connection uses `check_sa
 **MANDATORY**: All changes must be tested before committing.
 
 - UI changes → Launch the DearPyGui app and verify the affected screen
-- Database changes → Run `test_dir/test_attendance_schema.py`
+- Database changes → Run `test/test_attendance_schema.py`
 - Probability scripts → Run the script and check output
 - **All changes** → Present results for user review before committing
 

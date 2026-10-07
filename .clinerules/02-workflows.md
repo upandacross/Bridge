@@ -56,14 +56,14 @@ cd Bridge && python3 hcp_plots.py         # Generate HCP/TP plots
 ### Schema Tests
 
 ```bash
-cd Bridge && python3 test_dir/test_attendance_schema.py
+cd Bridge && python3 test/test_attendance_schema.py
 ```
 
 Tests verify the SQLite schema is correct and attendance data integrity holds.
 
 ### Validation Data
 
-`test_dir/attendance_validation.csv` contains known-good attendance data for validation.
+`test/attendance_validation.csv` contains known-good attendance data for validation.
 
 ### Testing New Simulations
 
