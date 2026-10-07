@@ -117,3 +117,27 @@ else:
 **Root Cause**: The opening bid breaks the symmetry. LHO has ~13 HCP; RHO has ~5 HCP. The King is much more likely with the player who has more HCP (the opener). Finessing through LHO works ~70%; finessing around LHO (through RHO) works only ~34%.
 
 **Fix**: Always finesse **through the opener**, not around them. This is a classic bridge principle, now quantified by simulation.
+
+## 12. Directory Renames Done Outside Git Leave Stale Tracked Paths
+
+**Problem**: A directory renamed on disk (e.g. `test_dir/` → `test/`) but never staged shows up in `git status` as a set of **deletions** of the old paths plus an **untracked** new directory. This can be misread as a docs bug or missing files — and worse, `grep`/`ls` on disk only reveals the *new* name, hiding that git still tracks the *old* one. (Encountered this session: the `.clinerules` docs were blamed for referencing `test_dir/` when they were actually correct — the directory had simply been renamed beneath git's notice.)
+
+**Diagnosis**: Compare git's view against disk:
+
+```bash
+git --no-optional-locks ls-files test_dir test   # git's tracked paths
+ls -d test_dir test                              # what actually exists on disk
+```
+
+If one name is tracked and the other exists on disk with identical contents, it's an unstaged rename.
+
+**Fix**: Stage **both sides** so git records a rename (R) rather than delete + add:
+
+```bash
+git add test/          # the new path (or the specific file)
+git add -u test_dir/   # stage the removal of the old path
+```
+
+Then confirm with `git --no-optional-locks status --porcelain -M` — you should see `R  old -> new`, not `D old` + `?? new`.
+
+**Related**: Generated files at the new path are often gitignored (e.g. `*.csv`), so their old tracked copies show as pure deletions with no counterpart to pair against — that is expected, not a bug.

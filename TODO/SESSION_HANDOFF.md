@@ -10,21 +10,21 @@ Additional work this session: SMS reminder script for declined signups; player-c
 
 | Path | What changed | Category | Status |
 |------|-------------|----------|--------|
-| `.clinerules/00-critical.md` | Critical rules for the Bridge project | config | committed (pending hash) |
-| `.clinerules/01-architecture.md` | Architecture patterns (SQLite, DearPyGui, PyMC, simulations) | config | committed (pending hash) |
-| `.clinerules/02-workflows.md` | Development workflows (running scripts, testing, PDF gen) | config | committed (pending hash) |
-| `.clinerules/03-gotchas.md` | 11 learned gotchas from this session | config | committed (pending hash) |
+| `.clinerules/00-critical.md` | Critical rules for the Bridge project | config | committed |
+| `.clinerules/01-architecture.md` | Architecture patterns (SQLite, DearPyGui, PyMC, simulations) | config | committed |
+| `.clinerules/02-workflows.md` | Development workflows (running scripts, testing, PDF gen) | config | committed |
+| `.clinerules/03-gotchas.md` | 12 learned gotchas from this session | config | committed |
 | `pyproject.toml` | Added `pymc>=5.28.5` (later `pytest>=9.1.1`) dependency | config | committed |
 | `uv.lock` | Lockfile updates for pymc/pytest | config | committed |
-| `generate_player_cards.py` | Default PDF filename `player_cards<N>.pdf`; CSV/HTML now opt-in | code | committed (pending hash) |
-| `README.md` | Documented `send_bridge_sms.py` (mark convention, discovery, always-call) | docs | committed (pending hash) |
-| `send_bridge_sms.py` | SMS reminders to players marked `x` (declined) in the ODS signup sheet | code | committed (pending hash) |
-| `finesse_model.py` | Analytical PyMC models: HCP-only (74.4%) and HCP+vacant places (69.4%) | code | committed (pending hash) |
-| `finesse_sim.py` | First simulation approach — **had a bug** (didn't filter King to be with an opponent). Superseded by `finesse_compare.py`. | code | committed (pending hash) |
-| `finesse_compare.py` | **Corrected** simulation comparing two finesse scenarios. Key file. | code | committed (pending hash) |
-| `contract_probs.py` | Simulates 1M deals, partnership HCP distribution, table + histogram | code | committed (pending hash) |
-| `hcp_distribution.py`, `hcp_plots.py` | HCP / Total Points distribution + plots | code | committed (pending hash) |
-| `split.py`, `trump_split.py` | Trump split distributions | code | committed (pending hash) |
+| `generate_player_cards.py` | Default PDF filename `player_cards<N>.pdf`; CSV/HTML now opt-in | code | committed |
+| `README.md` | Documented `send_bridge_sms.py` (mark convention, discovery, always-call) | docs | committed |
+| `send_bridge_sms.py` | SMS reminders to players marked `x` (declined) in the ODS signup sheet | code | committed |
+| `finesse_model.py` | Analytical PyMC models: HCP-only (74.4%) and HCP+vacant places (69.4%) | code | committed |
+| `finesse_sim.py` | First simulation approach — **had a bug** (didn't filter King to be with an opponent). Superseded by `finesse_compare.py`. | code | committed |
+| `finesse_compare.py` | **Corrected** simulation comparing two finesse scenarios. Key file. | code | committed |
+| `contract_probs.py` | Simulates 1M deals, partnership HCP distribution, table + histogram | code | committed |
+| `hcp_distribution.py`, `hcp_plots.py` | HCP / Total Points distribution + plots | code | committed |
+| `split.py`, `trump_split.py` | Trump split distributions | code | committed |
 | `main.py`, `test_pair_intersection.py` | Removed (unused entry point / stale test script) | code | committed |
 | `test/` (renamed from `test_dir/`) | Directory renamed on disk; `test_attendance_schema.py` tracked at new path | code | committed (this commit) |
 | `.clinerules/00-critical.md`, `.clinerules/02-workflows.md` | Path refs updated `test_dir/` → `test/` | config | committed (this commit) |
