@@ -14,8 +14,8 @@ Additional work this session: SMS reminder script for declined signups; player-c
 | `.clinerules/01-architecture.md` | Architecture patterns (SQLite, DearPyGui, PyMC, simulations) | config | committed (pending hash) |
 | `.clinerules/02-workflows.md` | Development workflows (running scripts, testing, PDF gen) | config | committed (pending hash) |
 | `.clinerules/03-gotchas.md` | 11 learned gotchas from this session | config | committed (pending hash) |
-| `pyproject.toml` | Added `pymc>=5.28.5` dependency | config | committed (pending hash) |
-| `uv.lock` | Lockfile update for pymc | config | committed (pending hash) |
+| `pyproject.toml` | Added `pymc>=5.28.5` (later `pytest>=9.1.1`) dependency | config | committed |
+| `uv.lock` | Lockfile updates for pymc/pytest | config | committed |
 | `generate_player_cards.py` | Default PDF filename `player_cards<N>.pdf`; CSV/HTML now opt-in | code | committed (pending hash) |
 | `README.md` | Documented `send_bridge_sms.py` (mark convention, discovery, always-call) | docs | committed (pending hash) |
 | `send_bridge_sms.py` | SMS reminders to players marked `x` (declined) in the ODS signup sheet | code | committed (pending hash) |
@@ -25,8 +25,11 @@ Additional work this session: SMS reminder script for declined signups; player-c
 | `contract_probs.py` | Simulates 1M deals, partnership HCP distribution, table + histogram | code | committed (pending hash) |
 | `hcp_distribution.py`, `hcp_plots.py` | HCP / Total Points distribution + plots | code | committed (pending hash) |
 | `split.py`, `trump_split.py` | Trump split distributions | code | committed (pending hash) |
-| `main.py`, `test_pair_intersection.py` | Removed (unused entry point / stale test script) | code | committed (pending hash) |
-| `TODO/SESSION_HANDOFF.md` | This handoff document | config | committed (pending hash) |
+| `main.py`, `test_pair_intersection.py` | Removed (unused entry point / stale test script) | code | committed |
+| `test/` (renamed from `test_dir/`) | Directory renamed on disk; `test_attendance_schema.py` tracked at new path | code | committed (this commit) |
+| `.clinerules/00-critical.md`, `.clinerules/02-workflows.md` | Path refs updated `test_dir/` → `test/` | config | committed (this commit) |
+| `.gitignore` | Added `*.png`, `*.txt`, `node_modules/` | config | committed |
+| `TODO/SESSION_HANDOFF.md` | This handoff document | config | committed (this commit) |
 
 ### Not committed (working artifacts — intentionally left out)
 
@@ -48,13 +51,17 @@ No DB writes committed. Code + config changes only.
 
 4. **10 as honor**: Including the 10 (rank 8) as an honor shifted results ~1pp.
 
+5. **Test directory was renamed on disk but never committed**: `test_dir/` (git-tracked) was renamed to `test/` outside git, leaving stale `test_dir/` entries plus an untracked `test/`. Resolved by staging the rename explicitly (`git add test/test_attendance_schema.py && git add -u test_dir/`) so git records a rename, not delete+add. Note `.clinerules` docs originally referenced the correct historical name; the paths are now updated to `test/`.
+
+6. **CodeGraph post-commit hook had a stale error marker** (`~/.local/state/prc/<hash>/code_graph_error`): a transient `sqlite3.OperationalError: unable to open database file`. Running `rebuild_code_graph.py` directly succeeded and self-cleared the marker — the failure was not a permissions/FS issue.
+
 ## 4. Pending Steps
 
 **Ready to run (rerunnable):**
 - `cd Bridge && python3 finesse_compare.py`
 - `cd Bridge && python3 contract_probs.py`
 - `cd Bridge && python3 finesse_model.py`
-- `cd Bridge && python3 test_dir/test_attendance_schema.py` (schema test)
+- `cd Bridge && python3 test/test_attendance_schema.py` (schema test)
 
 **Blocked on user decision:**
 - Minor suit opening (3+ cards, asking for 4-card major) — user said "keep it simple for now."
@@ -65,7 +72,9 @@ No DB writes committed. Code + config changes only.
 
 1. Model a minor-suit opening as a separate scenario?
 2. Rewrite `context_sets/best_practices.md` for the Bridge project?
-3. Should `bridge.db`, `node_modules/`, and the ODS files be gitignored? They are currently untracked/tracked cruft.
+3. RESOLVED: `node_modules/` is now gitignored + untracked; `*.png`/`*.txt` ignored. `bridge.db` and `*.ods` deliberately kept tracked/visible per user preference.
+4. `test/test_attendance_schema.py:176` docstring still says "CSV file in test_dir" — cosmetic, unchanged from HEAD; fix if touching the file.
+5. `Bridge Base Online_files/` (~14 MB scraped BBO assets) is untracked and NOT ignored — decide whether to ignore or remove.
 4. Any further bridge probability questions to model (restricted choice, etc.)?
 
 ## 6. Validation Status
@@ -75,8 +84,8 @@ No DB writes committed. Code + config changes only.
 | `finesse_model.py` — PyMC convergence | ✅ r_hat=1.0, no divergences (previous session) |
 | `finesse_compare.py` — Simulation | ✅ 20k+ matching deals, tight 95% CIs (previous session) |
 | `contract_probs.py` — Simulation | ✅ 1M deals, stable convergence (previous session) |
-| Schema test (`test_dir/test_attendance_schema.py`) | ⚠️ NOT run this session |
-| Git commits | ✅ Executed this session (6 groups — see commit log) |
+| Schema test (`test/test_attendance_schema.py`) | ✅ run this session (34/34 games valid, 442 records, 0 errors) |
+| Git commits | ✅ Executed this session (multiple phased groups — see `git log`) |
 
 ## 7. Resume Here
 
