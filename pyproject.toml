@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "dearpygui>=2.1.1",
     "mcp>=1.26.0",
+    "pymc>=5.28.5",
     "weasyprint>=68.1",
 ]
 
