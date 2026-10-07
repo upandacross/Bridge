@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python3
 """
 Generate player cards for bridge game assignments.
 
@@ -541,20 +541,20 @@ def main():
     parser.add_argument(
         "--output-csv",
         type=str,
-        default="player_cards.csv",
-        help="CSV output filename (default: player_cards.csv)"
+        default=None,
+        help="CSV output filename (opt-in; not produced unless specified)"
     )
     parser.add_argument(
         "--output-html",
         type=str,
-        default="player_cards.html",
-        help="HTML output filename (default: player_cards.html)"
+        default=None,
+        help="HTML output filename (opt-in; not produced unless specified)"
     )
     parser.add_argument(
         "--output-pdf",
         type=str,
         default=None,
-        help="PDF output filename (requires weasyprint: pip install weasyprint)"
+        help="PDF output filename (default: player_cards<--tables value>.pdf; requires weasyprint: pip install weasyprint)"
     )
     parser.add_argument(
         "--output-template",
@@ -568,7 +568,11 @@ def main():
         help="Skip console output (only export files)"
     )
     args = parser.parse_args()
-    
+
+    # Default PDF filename based on the --tables value (e.g. player_cards5.pdf)
+    if args.output_pdf is None:
+        args.output_pdf = f"player_cards{args.tables}.pdf"
+
     # Load player names if provided
     player_names = None
     if args.players:
@@ -596,12 +600,13 @@ def main():
         generator.display_summary()
     
     # Export to files (cards_per_page=6 for fixed 2.6" card height on A4)
-    generator.export_csv(args.output_csv)
-    generator.export_html(args.output_html, cards_per_page=6)
+    if args.output_csv:
+        generator.export_csv(args.output_csv)
+    if args.output_html:
+        generator.export_html(args.output_html, cards_per_page=6)
     
-    # Export to PDF if requested
-    if args.output_pdf:
-        generator.export_pdf(args.output_pdf, cards_per_page=6)
+    # Export to PDF
+    generator.export_pdf(args.output_pdf, cards_per_page=6)
     
     # Export template cards if requested
     if args.output_template:
