@@ -32,7 +32,8 @@ Additional work this session: SMS reminder script (`send_bridge_sms.py`) — now
 | `.gitignore` | Added `*.png`, `*.txt`, `node_modules/`, `Bridge Base Online_files/` | config | committed |
 | `test/test_sms_logic.py` | Unit tests for `send_bridge_sms` pure logic (36 tests) | tests | committed |
 | `test/test_attendance_validation.py` | Unit + integration tests for attendance validation | tests | committed |
-| `test/test_database.py` | CRUD tests for `database.py` (temp-file DBs) | tests | committed (this session) |
+| `test/test_database.py` | CRUD tests for `database.py` (temp-file DBs) | tests | committed |
+| `test/test_player_cards.py` | Invariant tests for `PlayerCardGenerator` | tests | committed (this session) |
 | `pytest.ini` | Registers `integration` marker; deselects it by default | config | committed (this session) |
 | `TODO/SESSION_HANDOFF.md` | This handoff document | config | committed (this commit) |
 
@@ -90,6 +91,7 @@ Generated outputs (`output*.txt`, `trump_split_result.txt`) and plots (`*.png`) 
 | SMS logic unit tests (`test/test_sms_logic.py`) | ✅ `uv run pytest` — 36 passed; `pyright` clean |
 | Attendance validation tests (`test/test_attendance_validation.py`) | ✅ 20 unit passed; 4 integration passed (`-m integration`); `pyright` clean |
 | Database CRUD tests (`test/test_database.py`) | ✅ 29 passed (temp-file DBs); `pyright` clean |
+| Player card tests (`test/test_player_cards.py`) | ✅ 12 passed (seeded; invariants held over 300 seeds); `pyright` clean |
 | CodeGraph rebuild | ✅ re-enabled this session (stale error marker cleared) |
 | Git commits | ✅ Executed this session (multiple phased groups — see `git log`) |
 
@@ -99,7 +101,7 @@ Generated outputs (`output*.txt`, `trump_split_result.txt`) and plots (`*.png`) 
 
 **SMS script quick reference** (`send_bridge_sms.py`): default audience is `attending` (`✔`); `--audience declined` targets `x`; `--always-call NAMES` adds to the built-in {Milrie Lentz, Trudy Smith}; `--force` ignores the send log; dry-run is the default (add `--execute` to send). The ODS sheets are live data — recipient counts shift as the sheet is edited.
 
-**Tests:** run `cd Bridge && uv run pytest` — 89 unit tests (SMS logic + attendance schema rules + database CRUD). Integration tests hit the real `bridge.db`: `uv run pytest -m integration` (4 tests). The older `test/test_attendance_schema.py` is a standalone script (`python3 test/test_attendance_schema.py`), not collected by pytest. All test files use temp-file DBs where a DB is needed — never `bridge.db`, per `.clinerules`.
+**Tests:** run `cd Bridge && uv run pytest` — 101 unit tests (SMS logic + attendance schema rules + database CRUD + player cards). Integration tests hit the real `bridge.db`: `uv run pytest -m integration` (4 tests). The older `test/test_attendance_schema.py` is a standalone script (`python3 test/test_attendance_schema.py`), not collected by pytest. All test files use temp-file DBs where a DB is needed — never `bridge.db`, per `.clinerules`.
 
 **Bridge probability work:** re-read `finesse_compare.py` (the key corrected simulation) and `output_compare.txt` (results). The highest-leverage next step is the minor-suit opening scenario or HCP sensitivity analysis in `finesse_compare.py`.
 
