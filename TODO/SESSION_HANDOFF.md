@@ -4,7 +4,7 @@
 
 Built Bayesian models (PyMC) and Monte Carlo simulations to answer two bridge probability questions: (1) whether a finesse for the King works when LHO has opened, and (2) the probability of a partnership having enough HCP for each contract level (game, slam). Key finding: when LHO opens a 5-card suit that is not yours, the finesse **through LHO** is strongly favored (~70%) while finessing **around LHO** (through RHO) is strongly disfavored (~34%). Contract probability table: P(any game)≈17.5%, P(small slam)≈0.35%, P(grand slam)≈0.01%.
 
-Additional work this session: SMS reminder script (`send_bridge_sms.py`) — now sends to **attendees by default** (`--audience attending|declined`), with `--force` to bypass the send log and additive `--always-call`; player-card generator now defaults to `player_cards<N>.pdf`; project `.clinerules` memory added; pyright wired in as the type-check (gotcha #13).
+Additional work this session: SMS reminder script (`send_bridge_sms.py`) — now sends to **attendees by default** (`--audience attending|declined`), with `--force` to bypass the send log and additive `--always-call`; player-card generator now defaults to `player_cards<N>.pdf`; project `.clinerules` memory added; pyright wired in as the type-check (gotcha #13); `phone-mcp` relocated to a shared clone with a `PHONE_MCP_DIR` override; first pytest unit tests for the SMS logic added.
 
 ## 2. Files Changed
 
@@ -18,7 +18,8 @@ Additional work this session: SMS reminder script (`send_bridge_sms.py`) — now
 | `uv.lock` | Lockfile updates for pymc/pytest | config | committed |
 | `generate_player_cards.py` | Default PDF filename `player_cards<N>.pdf`; CSV/HTML now opt-in | code | committed |
 | `README.md` | Documented `send_bridge_sms.py` (mark convention, discovery, always-call) | docs | committed |
-| `send_bridge_sms.py` | SMS to signup sheet; audience selectable (`--audience`, default **attending**), `--force` bypasses send log, additive `--always-call` | code | committed (this session) |
+| `test/test_sms_logic.py` | Unit tests for `send_bridge_sms` pure logic (36 tests) | tests | committed (this session) |
+| `send_bridge_sms.py` | SMS to signup sheet; audience selectable (`--audience`, default **attending**), `--force` bypasses send log, additive `--always-call`; resolves `phone-mcp` via `PHONE_MCP_DIR` | code | committed |
 | `finesse_model.py` | Analytical PyMC models: HCP-only (74.4%) and HCP+vacant places (69.4%) | code | committed |
 | `finesse_sim.py` | First simulation approach — **had a bug** (didn't filter King to be with an opponent). Superseded by `finesse_compare.py`. | code | committed |
 | `finesse_compare.py` | **Corrected** simulation comparing two finesse scenarios. Key file. | code | committed |
@@ -88,6 +89,7 @@ No DB writes committed. Code + config changes only.
 | `contract_probs.py` — Simulation | ✅ 1M deals, stable convergence (previous session) |
 | Schema test (`test/test_attendance_schema.py`) | ✅ run this session (34/34 games valid, 442 records, 0 errors) |
 | `send_bridge_sms.py` — flag changes | ✅ dry-run verified (audience/force/always-call); `pyright` clean; **not** executed against real recipients by the agent |
+| SMS logic unit tests (`test/test_sms_logic.py`) | ✅ `uv run pytest test/` — 36 passed; `pyright` clean |
 | CodeGraph rebuild | ✅ re-enabled this session (stale error marker cleared) |
 | Git commits | ✅ Executed this session (multiple phased groups — see `git log`) |
 
@@ -96,5 +98,22 @@ No DB writes committed. Code + config changes only.
 **Load `.clinerules/00-critical.md` through `03-gotchas.md` first.**
 
 **SMS script quick reference** (`send_bridge_sms.py`): default audience is `attending` (`✔`); `--audience declined` targets `x`; `--always-call NAMES` adds to the built-in {Milrie Lentz, Trudy Smith}; `--force` ignores the send log; dry-run is the default (add `--execute` to send). The ODS sheets are live data — recipient counts shift as the sheet is edited.
+
+**Tests:** run `cd Bridge && uv run pytest test/` (36 SMS-logic tests). The older `test/test_attendance_schema.py` is a standalone script (`python3 test/test_attendance_schema.py`), not collected by pytest.
+
+## 8. Shared dependency: phone-mcp
+
+`send_bridge_sms.py` imports `KDEConnect` from a shared clone of the
+third-party **phone-mcp** repo (upstream `github.com/wexi/phone-mcp`, by a
+developer "Enoch"). It was moved out of `precinct/phone-mcp` to avoid one
+consumer owning it:
+
+- **Now at:** `~/Home/Projects/phone-mcp` (override with `PHONE_MCP_DIR`).
+- **Consumers:** `Bridge/send_bridge_sms.py` and
+  `precinct/app_administration/send_release_announcement.py` both resolve it
+  via the same env-overridable path.
+- **pyright:** `Bridge/pyproject.toml` `[tool.pyright] extraPaths` points at it.
+- **Local-only commits:** phone-mcp has 2 unpushed typing commits
+  (`f8c70f2`, `e8bea65`) — not pushed upstream (no write access to `wexi`).
 
 Then re-read `finesse_compare.py` (the key corrected simulation) and `output_compare.txt` (results). The highest-leverage next step is the minor-suit opening scenario or HCP sensitivity analysis in `finesse_compare.py`.
