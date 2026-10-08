@@ -29,18 +29,15 @@ Additional work this session: SMS reminder script (`send_bridge_sms.py`) — now
 | `main.py`, `test_pair_intersection.py` | Removed (unused entry point / stale test script) | code | committed |
 | `test/` (renamed from `test_dir/`) | Directory renamed on disk; `test_attendance_schema.py` tracked at new path | code | committed (this commit) |
 | `.clinerules/00-critical.md`, `.clinerules/02-workflows.md` | Path refs updated `test_dir/` → `test/` | config | committed (this commit) |
-| `.gitignore` | Added `*.png`, `*.txt`, `node_modules/` | config | committed |
+| `.gitignore` | Added `*.png`, `*.txt`, `node_modules/`, `Bridge Base Online_files/` | config | committed |
+| `test/test_sms_logic.py` | Unit tests for `send_bridge_sms` pure logic (36 tests) | tests | committed |
+| `test/test_attendance_validation.py` | Unit + integration tests for attendance validation | tests | committed (this session) |
+| `pytest.ini` | Registers `integration` marker; deselects it by default | config | committed (this session) |
 | `TODO/SESSION_HANDOFF.md` | This handoff document | config | committed (this commit) |
 
 ### Not committed (working artifacts — intentionally left out)
 
-- Generated outputs: `output.txt`, `output_sim.txt`, `output_compare.txt`, `output_probs.txt`, `trump_split_result.txt`
-- Generated plots (PNGs): `contract_probabilities.png`, `finesse_combined.png`, `finesse_comparison.png`, `finesse_posterior.png`, `finesse_prior.png`, `finesse_simulation.png`, `hcp_cumulative.png`, `hcp_distribution.png`, `hcp_vs_total_points.png`, `opening_ranges.png`, `total_points_cumulative.png`, `total_points_distribution.png`
-- Large binary data: `bridge.db` (SQLite, modified), `Bridge Signup Thursday October.ods`, `Bridge Signup Thursday.ods`, `ballotForPenalties.ods`
-- Scraped webpage assets: `Bridge Base Online_files/` (~14 MB BBO JS chunks)
-- Pre-existing tracked cruft: `node_modules/` (586 tracked files; symlinks changed) — NOT gitignored; consider adding to `.gitignore`
-
-No DB writes committed. Code + config changes only.
+Generated outputs (`output*.txt`, `trump_split_result.txt`) and plots (`*.png`) are now gitignored; the October signup `.ods` sheets and `bridge.db` are tracked. Nothing is intentionally left uncommitted in this repo.
 
 ## 3. Root Causes & Diagnoses
 
@@ -99,7 +96,9 @@ No DB writes committed. Code + config changes only.
 
 **SMS script quick reference** (`send_bridge_sms.py`): default audience is `attending` (`✔`); `--audience declined` targets `x`; `--always-call NAMES` adds to the built-in {Milrie Lentz, Trudy Smith}; `--force` ignores the send log; dry-run is the default (add `--execute` to send). The ODS sheets are live data — recipient counts shift as the sheet is edited.
 
-**Tests:** run `cd Bridge && uv run pytest test/` (36 SMS-logic tests). The older `test/test_attendance_schema.py` is a standalone script (`python3 test/test_attendance_schema.py`), not collected by pytest.
+**Tests:** run `cd Bridge && uv run pytest` — 60 unit tests (SMS logic + attendance schema rules). Integration tests hit the real `bridge.db`: `uv run pytest -m integration` (4 tests). The older `test/test_attendance_schema.py` is a standalone script (`python3 test/test_attendance_schema.py`), not collected by pytest.
+
+**Bridge probability work:** re-read `finesse_compare.py` (the key corrected simulation) and `output_compare.txt` (results). The highest-leverage next step is the minor-suit opening scenario or HCP sensitivity analysis in `finesse_compare.py`.
 
 ## 8. Shared dependency: phone-mcp
 
@@ -115,5 +114,3 @@ consumer owning it:
 - **pyright:** `Bridge/pyproject.toml` `[tool.pyright] extraPaths` points at it.
 - **Local-only commits:** phone-mcp has 2 unpushed typing commits
   (`f8c70f2`, `e8bea65`) — not pushed upstream (no write access to `wexi`).
-
-Then re-read `finesse_compare.py` (the key corrected simulation) and `output_compare.txt` (results). The highest-leverage next step is the minor-suit opening scenario or HCP sensitivity analysis in `finesse_compare.py`.
