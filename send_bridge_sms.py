@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Send an SMS to bridge players who are *not* attending the next game.
+"""Send an SMS to bridge players based on the Thursday signup sheet.
 
-Reads the Thursday signup spreadsheet (ODS), picks the next upcoming game
-day column, and texts every player marked ``x`` in that column. In this
-sheet ``x`` means "not attending" (declined) and ``✔`` means "attending",
-so the ``x`` recipients are exactly the people who need the "confirming
-you won't be there" message.
+Reads the Thursday signup spreadsheet (ODS), picks a game-day column, and
+texts every player whose mark matches the chosen audience. In this sheet
+``x`` means "not attending" (declined) and ``✔`` means "attending".
+
+By default the audience is the players marked ``✔`` (attending) -- a
+"see you there" style message. Pass ``--audience declined`` to instead text
+the players marked ``x`` (e.g. a "confirming you won't be there" note).
 
 Sending goes through the paired phone's cellular line via KDE Connect
 (``kdeconnect-cli``), reusing the ``KDEConnect`` helper from the precinct
@@ -21,10 +23,16 @@ Always-call (do not text):
     1. An "Always call X" note in the sheet's Last column (e.g.
        "Trudy | Always call Smith"). These rows are detected automatically.
     2. The ALWAYS_CALL set of real names (default: Milrie Lentz, Trudy
-       Smith), matched case-insensitively against "First Last". Override
-       with --always-call.
+       Smith), matched case-insensitively against "First Last".
+  --always-call NAMES adds extra names to the built-in set;
+  --always-call-replace treats the given names as the complete set.
   These players are excluded from the SMS and listed separately under
   "call these instead". Use --include-always-call to text them anyway.
+
+Send log / resending:
+  A CSV send log keys on the message hash, so re-running the same message
+  skips phones already texted. Use --force to ignore the log for a run and
+  re-send to everyone selected.
 
 Safety:
   A phone-link check runs first by default: it reports the KDE Connect
@@ -119,8 +127,14 @@ from kdeconnect import KDEConnect  # noqa: E402
 _NS_TABLE = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
 _NS_TEXT = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 
-# Marks in a day column. "x" means declined (the SMS audience).
+# Marks in a day column. "x" means declined, "✔" means attending.
 MARK_DECLINED = {"x", "X"}
+MARK_ATTENDING = {"✔"}
+# Audience -> the set of marks that select a recipient.
+AUDIENCE_MARKS = {
+    "declined": MARK_DECLINED,
+    "attending": MARK_ATTENDING,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +296,11 @@ def normalize_phone(phone: str) -> str | None:
 
 
 def collect_declined(rows: list[list[str]], header_idx: int,
-                     day_col: int) -> tuple[list[dict], list[dict]]:
-    """Return (declined recipients, invalid-phone rows) with dedup applied.
+                     day_col: int,
+                     marks: set[str] = MARK_DECLINED) -> tuple[list[dict], list[dict]]:
+    """Return (recipients, invalid-phone rows) with dedup applied.
 
+    ``marks`` selects the audience: MARK_DECLINED (default) or MARK_ATTENDING.
     Recipients are deduplicated by normalized phone so a shared household
     number gets a single text.
     """
@@ -296,7 +312,7 @@ def collect_declined(rows: list[list[str]], header_idx: int,
         if day_col >= len(row):
             continue
         mark = row[day_col].strip()
-        if mark not in MARK_DECLINED:
+        if mark not in marks:
             continue
         phone_raw = row[0].strip() if row else ""
         if not phone_raw:
@@ -380,7 +396,7 @@ def render_message(template: str, recipient: dict) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Text bridge players who are not attending the next game.",
+        description="Text bridge players selected from the signup game day.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -401,9 +417,22 @@ def main() -> None:
     parser.add_argument("--sleep-max", type=float, default=7,
                         help="Max seconds between batches (default: 7)")
     parser.add_argument("--always-call", nargs="*", default=None,
-                        help="Names to skip as always-call (replaces default)")
+                        help="Extra names to skip as always-call (adds to "
+                             "the built-in set; use --always-call-replace to "
+                             "override it entirely)")
+    parser.add_argument("--always-call-replace", action="store_true",
+                        help="Treat --always-call as the full set, replacing "
+                             "the built-in defaults")
+    parser.add_argument("--force", action="store_true",
+                        help="Ignore the send log for this run and re-send to "
+                             "everyone selected, even phones already texted "
+                             "with this message")
     parser.add_argument("--include-always-call", action="store_true",
                         help="Send to always-call players too")
+    parser.add_argument("--audience", choices=["declined", "attending"],
+                        default="attending",
+                        help="Who to text: players marked '✔' (attending, "
+                             "default) or 'x' (declined)")
     parser.add_argument("--log-file", type=Path, default=LOG_FILE_DEFAULT,
                         help=f"Send log CSV (default: {LOG_FILE_DEFAULT.name})")
     parser.add_argument("--execute", action="store_true",
@@ -445,8 +474,12 @@ def main() -> None:
     if not args.message:
         sys.exit("--message is required (unless --check-phone yes is used)")
 
-    always_call = (set(args.always_call) if args.always_call is not None
-                   else set(ALWAYS_CALL))
+    if args.always_call is None:
+        always_call = set(ALWAYS_CALL)
+    elif args.always_call_replace:
+        always_call = set(args.always_call)
+    else:
+        always_call = set(ALWAYS_CALL) | set(args.always_call)
 
     # --- Parse the sheet and select the day ---
     ods_path = args.ods or discover_sheet(SCRIPT_DIR)
@@ -459,7 +492,8 @@ def main() -> None:
     day = pick_day(days, args.day, year, month)
     day_col = days[day]
 
-    recipients, invalid = collect_declined(rows, header_idx, day_col)
+    recipients, invalid = collect_declined(
+        rows, header_idx, day_col, AUDIENCE_MARKS[args.audience])
 
     # --- Split out always-call players ---
     def _call_only(r: dict) -> bool:
@@ -471,7 +505,10 @@ def main() -> None:
 
     # --- Dedup against the send log ---
     msg_hash = message_hash(args.message)
-    sent_phones = load_sent_log(args.log_file, msg_hash)
+    if args.force:
+        sent_phones: set[str] = set()
+    else:
+        sent_phones = load_sent_log(args.log_file, msg_hash)
     already = [r for r in recipients if r["normalized"] in sent_phones]
     recipients = [r for r in recipients if r["normalized"] not in sent_phones]
 

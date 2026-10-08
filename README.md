@@ -66,8 +66,10 @@ Example:
 
 ## SMS Signup Reminders (`send_bridge_sms.py`)
 
-Texts the players who are **not** attending the next game, using the
-Thursday signup spreadsheet (ODS) and a phone paired over KDE Connect.
+Texts bridge players selected from the Thursday signup spreadsheet (ODS)
+via a phone paired over KDE Connect. By default it texts the players marked
+**attending** for the chosen day; `--audience declined` selects the players
+marked **not attending** instead.
 
 ### Mark convention (important)
 
@@ -76,9 +78,11 @@ The signup spreadsheet's day columns use:
 - `x`  = **not attending** (declined)
 - `✔`  = **attending**
 
-This is the **opposite** of the attendance-table example above, where `x`
-marks a player who is attending. The SMS script targets the `x` (declined)
-rows, because the message confirms that the player will not be there.
+The default audience is the `✔` (attending) rows — e.g. a "see you there"
+note. Pass `--audience declined` to target the `x` rows instead (a
+"confirming you won't be there" note). Either way the marks are the
+**opposite** of the attendance-table example above, where `x` marks a
+player who is attending.
 
 ### How it works
 
@@ -102,8 +106,9 @@ rows, because the message confirms that the player will not be there.
    - A sheet for the *next* month may be used early, e.g. a January sheet
      opened in late December.
    Use `--day DD` to force a specific column.
-4. Collects rows marked `x`, normalizes phones to E.164, and deduplicates
-   by phone so a shared household number gets one text.
+4. Collects rows whose mark matches the audience (`✔` attending by
+default, or `x` with `--audience declined`), normalizes phones to E.164,
+and deduplicates by phone so a shared household number gets one text.
 
 ### Always-call players (do not text)
 
@@ -114,10 +119,18 @@ Some players prefer a call. Two signals mark them, and both are honored:
   stripped so the name displays cleanly.
 - The **`ALWAYS_CALL`** set of real names at the top of the script
   (default: Milrie Lentz, Trudy Smith), matched case-insensitively against
-  `First Last`. Override with `--always-call "First Last" ...`.
+  `First Last`. `--always-call "First Last" ...` **adds** extra names to
+  that set; `--always-call-replace` treats the given names as the complete
+  set instead.
 
 These players are skipped and listed separately under *call these
 instead*. Use `--include-always-call` to text them anyway.
+
+### Resending (`--force`)
+
+The send log keys on the message hash, so re-running the **same** message
+skips phones already texted. `--force` ignores the log for a run and
+re-sends to everyone selected — e.g. to resend an identical broadcast.
 
 ### Phone link check
 
