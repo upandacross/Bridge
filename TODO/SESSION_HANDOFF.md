@@ -4,7 +4,7 @@
 
 Built Bayesian models (PyMC) and Monte Carlo simulations to answer two bridge probability questions: (1) whether a finesse for the King works when LHO has opened, and (2) the probability of a partnership having enough HCP for each contract level (game, slam). Key finding: when LHO opens a 5-card suit that is not yours, the finesse **through LHO** is strongly favored (~70%) while finessing **around LHO** (through RHO) is strongly disfavored (~34%). Contract probability table: P(any game)≈17.5%, P(small slam)≈0.35%, P(grand slam)≈0.01%.
 
-Additional work this session: SMS reminder script for declined signups; player-card generator now defaults to `player_cards<N>.pdf`; project `.clinerules` memory added.
+Additional work this session: SMS reminder script (`send_bridge_sms.py`) — now sends to **attendees by default** (`--audience attending|declined`), with `--force` to bypass the send log and additive `--always-call`; player-card generator now defaults to `player_cards<N>.pdf`; project `.clinerules` memory added; pyright wired in as the type-check (gotcha #13).
 
 ## 2. Files Changed
 
@@ -18,7 +18,7 @@ Additional work this session: SMS reminder script for declined signups; player-c
 | `uv.lock` | Lockfile updates for pymc/pytest | config | committed |
 | `generate_player_cards.py` | Default PDF filename `player_cards<N>.pdf`; CSV/HTML now opt-in | code | committed |
 | `README.md` | Documented `send_bridge_sms.py` (mark convention, discovery, always-call) | docs | committed |
-| `send_bridge_sms.py` | SMS reminders to players marked `x` (declined) in the ODS signup sheet | code | committed |
+| `send_bridge_sms.py` | SMS to signup sheet; audience selectable (`--audience`, default **attending**), `--force` bypasses send log, additive `--always-call` | code | committed (this session) |
 | `finesse_model.py` | Analytical PyMC models: HCP-only (74.4%) and HCP+vacant places (69.4%) | code | committed |
 | `finesse_sim.py` | First simulation approach — **had a bug** (didn't filter King to be with an opponent). Superseded by `finesse_compare.py`. | code | committed |
 | `finesse_compare.py` | **Corrected** simulation comparing two finesse scenarios. Key file. | code | committed |
@@ -62,20 +62,22 @@ No DB writes committed. Code + config changes only.
 - `cd Bridge && python3 contract_probs.py`
 - `cd Bridge && python3 finesse_model.py`
 - `cd Bridge && python3 test/test_attendance_schema.py` (schema test)
+- `cd Bridge && ./send_bridge_sms.py --file <sheet.ods> --day DD --message "..."` (dry-run; add `--execute` to send)
 
 **Blocked on user decision:**
 - Minor suit opening (3+ cards, asking for 4-card major) — user said "keep it simple for now."
 - Sensitivity analysis: dealer HCP 12 vs 14, second bidding round, 6-card opening suit.
 - Rewrite `context_sets/best_practices.md` (currently contains Precinct project content — see gotcha #10).
+- Whether to commit the signup ODS sheets (`Bridge Signup Friday October.ods`, the modified `Bridge Signup Thursday October.ods`, and `Bridge Signup Thursday October Backup.ods`) — currently left untracked/unstaged.
 
 ## 5. Open Decisions
 
 1. Model a minor-suit opening as a separate scenario?
 2. Rewrite `context_sets/best_practices.md` for the Bridge project?
-3. RESOLVED: `node_modules/` is now gitignored + untracked; `*.png`/`*.txt` ignored. `bridge.db` and `*.ods` deliberately kept tracked/visible per user preference.
-4. `test/test_attendance_schema.py:176` docstring still says "CSV file in test_dir" — cosmetic, unchanged from HEAD; fix if touching the file.
-5. `Bridge Base Online_files/` (~14 MB scraped BBO assets) is untracked and NOT ignored — decide whether to ignore or remove.
-4. Any further bridge probability questions to model (restricted choice, etc.)?
+3. RESOLVED: `node_modules/` gitignored + untracked; `*.png`/`*.txt`/`Bridge Base Online_files/` ignored. `bridge.db` and `*.ods` deliberately kept tracked/visible per user preference.
+4. RESOLVED: `test/test_attendance_schema.py` docstring `test_dir` reference fixed.
+5. Should `--audience` default stay `attending`? It reverses the script's original declined-oriented purpose — anything relying on the old default now targets the opposite group.
+6. Any further bridge probability questions to model (restricted choice, etc.)?
 
 ## 6. Validation Status
 
@@ -85,10 +87,14 @@ No DB writes committed. Code + config changes only.
 | `finesse_compare.py` — Simulation | ✅ 20k+ matching deals, tight 95% CIs (previous session) |
 | `contract_probs.py` — Simulation | ✅ 1M deals, stable convergence (previous session) |
 | Schema test (`test/test_attendance_schema.py`) | ✅ run this session (34/34 games valid, 442 records, 0 errors) |
+| `send_bridge_sms.py` — flag changes | ✅ dry-run verified (audience/force/always-call); `pyright` clean; **not** executed against real recipients by the agent |
+| CodeGraph rebuild | ✅ re-enabled this session (stale error marker cleared) |
 | Git commits | ✅ Executed this session (multiple phased groups — see `git log`) |
 
 ## 7. Resume Here
 
 **Load `.clinerules/00-critical.md` through `03-gotchas.md` first.**
+
+**SMS script quick reference** (`send_bridge_sms.py`): default audience is `attending` (`✔`); `--audience declined` targets `x`; `--always-call NAMES` adds to the built-in {Milrie Lentz, Trudy Smith}; `--force` ignores the send log; dry-run is the default (add `--execute` to send). The ODS sheets are live data — recipient counts shift as the sheet is edited.
 
 Then re-read `finesse_compare.py` (the key corrected simulation) and `output_compare.txt` (results). The highest-leverage next step is the minor-suit opening scenario or HCP sensitivity analysis in `finesse_compare.py`.
