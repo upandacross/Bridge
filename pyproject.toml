@@ -19,9 +19,9 @@ members = [
 ]
 
 [tool.pyright]
-# KDE Connect helper is imported at runtime from the sibling phone-mcp repo
+# KDE Connect helper is imported at runtime from the shared phone-mcp repo
 # (send_bridge_sms.py inserts it into sys.path). Point pyright at the same
 # directory so "from kdeconnect import KDEConnect" resolves during analysis.
 extraPaths = [
-    "/home/bren/Home/Projects/HTML_CSS/precinct/phone-mcp",
+    "/home/bren/Home/Projects/phone-mcp",
 ]

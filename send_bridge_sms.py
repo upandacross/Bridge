@@ -10,8 +10,8 @@ By default the audience is the players marked ``✔`` (attending) -- a
 the players marked ``x`` (e.g. a "confirming you won't be there" note).
 
 Sending goes through the paired phone's cellular line via KDE Connect
-(``kdeconnect-cli``), reusing the ``KDEConnect`` helper from the precinct
-project's ``phone-mcp`` repo.
+(``kdeconnect-cli``), reusing the ``KDEConnect`` helper from the shared
+``phone-mcp`` repo (``~/Home/Projects/phone-mcp``).
 
 Day selection:
   By default the script picks the smallest day-of-month in the header that
@@ -72,6 +72,7 @@ import argparse
 import csv
 import datetime
 import hashlib
+import os
 import random
 import re
 import sys
@@ -118,8 +119,10 @@ def discover_sheet(script_dir: Path) -> Path:
 # against "First Last". Edit here or override with --always-call.
 ALWAYS_CALL: set[str] = {"Milrie Lentz", "Trudy Smith"}
 
-# KDE Connect helper lives in the precinct project's standalone phone-mcp repo.
-PHONE_MCP_DIR = Path.home() / "Home/Projects/HTML_CSS/precinct/phone-mcp"
+# KDE Connect helper lives in the shared phone-mcp clone at ~/Home/Projects.
+# Override with the PHONE_MCP_DIR environment variable if it moves.
+PHONE_MCP_DIR = Path(os.environ.get(
+    "PHONE_MCP_DIR", Path.home() / "Home/Projects/phone-mcp"))
 sys.path.insert(0, str(PHONE_MCP_DIR))
 from kdeconnect import KDEConnect  # noqa: E402
 
