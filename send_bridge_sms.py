@@ -9,6 +9,13 @@ By default the audience is the players marked ``✔`` (attending) -- a
 "see you there" style message. Pass ``--audience declined`` to instead text
 the players marked ``x`` (e.g. a "confirming you won't be there" note).
 
+Ad-hoc numbers:
+  Pass ``--to`` to bypass the spreadsheet and text specific number(s)
+  directly: comma- or space-separated, e.g. ``--to "+13365551234, 336-555-9876"``.
+  Numbers are normalized and deduped exactly like sheet entries, so the send
+  log still applies. Handy for checking that the phone path works with a
+  number you control. ``{first}`` renders as the number itself (no names).
+
 Sending goes through the paired phone's cellular line via KDE Connect
 (``kdeconnect-cli``), reusing the ``KDEConnect`` helper from the shared
 ``phone-mcp`` repo (``~/Home/Projects/phone-mcp``).
@@ -34,15 +41,37 @@ Send log / resending:
   skips phones already texted. Use --force to ignore the log for a run and
   re-send to everyone selected.
 
+Composing the message:
+  Pass text on the command line with --message, or let the editor open to
+  compose it. The editor opens when you pass --edit (-e) OR whenever you omit
+  --message, so a bare run prompts for the text -- handy for multi-line
+  messages, which are awkward to quote in a shell. It uses $VISUAL, then
+  $EDITOR, else vi. The buffer is a temp file, removed afterward; if you save
+  nothing (or only blank lines) the script exits with "No message found".
+  {first} still works in an edited message.
+
 Safety:
   A phone-link check runs first by default: it reports the KDE Connect
-  device and battery. Without a message the run stops there (link check
-  only). With a message, dry-run continues to print the recipient list even
-  if the link is down; execute mode aborts if the phone is unreachable.
-  Pass --check-phone no to skip the check and proceed.
+  device and battery. With a message, dry-run continues to print the
+  recipient list even if the link is down; execute mode aborts if the phone
+  is unreachable. Pass --check-phone no to skip the check and proceed, or
+  --check-phone-only to run just the check (no editor, no send) and exit;
+  the latter exits non-zero if the phone is not reachable (script-friendly).
 
-  Dry-run by default (prints recipients without sending). Use --execute to
-  actually send. A CSV send log keys on the message hash so re-runs skip
+  NOTE ON "SENT": kdeconnect-cli --send-sms is fire-and-forget over DBus.
+  It exits 0 as soon as the request is handed to KDE Connect, without waiting
+  for the phone or reporting failures -- an invalid destination still returns
+  0 with no output. So a logged "sent" means "request accepted by KDE
+  Connect", not "delivered by the phone/carrier". If texts never appear on
+  the phone, check KDE Connect's SMS plugin is enabled and granted SMS
+  permission, and use --to to test with a number you can watch.
+
+  Dry-run by default (prints recipients without sending). Pass --dry-run to
+  request this explicitly: it prints the message and each recipient's phone
+  number, and sends nothing. Use --execute to actually send. --dry-run and
+  --execute cannot be combined.
+
+  A CSV send log keys on the message hash so re-runs skip
   phones already texted. Phone numbers are normalized to E.164 and
   deduplicated, so a household sharing one number gets a single text.
 
@@ -50,10 +79,20 @@ kdeconnect-cli is fire-and-forget: "sent" means KDE Connect accepted the
 message, not that the carrier delivered it.
 
 Usage examples:
-    # Check the phone link only (also the default when you omit the flag)
-    python send_bridge_sms.py --check-phone yes
+    # Check the phone link only, then exit (no editor, no send)
+    python send_bridge_sms.py --check-phone-only
 
-    # Dry-run: who would be texted for the next game
+    # Test the SMS path with a number you control
+    python send_bridge_sms.py --to "+13365551234" \
+        --message "Bridge test - please ignore" --execute
+
+    # Just open the editor to compose a text, then preview the recipients
+    python send_bridge_sms.py --file "Bridge Signup Thursday October.ods"
+
+    # Same, but skip the phone-link check and be explicit about the editor
+    python send_bridge_sms.py --edit --dry-run --check-phone no
+
+    # Pass the text inline instead of using the editor
     python send_bridge_sms.py --check-phone no \
         --message "Hi {first}, confirming you won't be at bridge on Oct 8. - Bren"
 
@@ -72,10 +111,14 @@ import argparse
 import csv
 import datetime
 import hashlib
+import io
 import os
 import random
 import re
+import shlex
+import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 import xml.etree.ElementTree as ET
@@ -298,6 +341,38 @@ def normalize_phone(phone: str) -> str | None:
     return None
 
 
+def parse_targets(raw: str) -> tuple[list[dict], list[str]]:
+    """Parse an ad-hoc --to list into (recipients, invalid) entries.
+
+    Accepts comma- and/or whitespace-separated numbers, e.g.
+    "+1336..., 336-123-4567". Returns one recipient dict per unique
+    normalized number, plus the raw strings that could not be normalized.
+    These recipients have no name, so {first} renders as the number itself.
+    """
+    recipients: list[dict] = []
+    invalid: list[str] = []
+    seen: set[str] = set()
+    for token in re.split(r"[,\s]+", raw.strip()):
+        if not token:
+            continue
+        normalized = normalize_phone(token)
+        if normalized is None:
+            invalid.append(token)
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        recipients.append({
+            "name": normalized,
+            "first": normalized,
+            "last": "",
+            "phone": token,
+            "normalized": normalized,
+            "call_only": False,
+        })
+    return recipients, invalid
+
+
 def collect_declined(rows: list[list[str]], header_idx: int,
                      day_col: int,
                      marks: set[str] = MARK_DECLINED) -> tuple[list[dict], list[dict]]:
@@ -361,40 +436,110 @@ def message_hash(message: str) -> str:
 
 
 def load_sent_log(log_path: Path, msg_hash: str) -> set[str]:
+    """Return phones already texted with this message hash.
+
+    Reads positionally rather than trusting a header row: a log written
+    without one must still dedup correctly. A real header line is harmless
+    because its second column is the literal "message_hash".
+    """
     sent: set[str] = set()
     if not log_path.exists():
         return sent
     with log_path.open(newline="", encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            if row.get("message_hash") == msg_hash and row.get("phone"):
-                sent.add(row["phone"])
+        for row in csv.reader(fh):
+            if len(row) >= 5 and row[1] == msg_hash and row[3]:
+                sent.add(row[3])
     return sent
 
 
+LOG_HEADER = ["timestamp", "message_hash", "name", "phone", "status"]
+
+
 def log_send(log_path: Path, msg_hash: str, recipient: dict, status: str) -> None:
-    write_header = not log_path.exists()
-    with log_path.open("a", newline="", encoding="utf-8") as fh:
+    """Append one send record, healing a missing CSV header in place.
+
+    Uses the same positional shape load_sent_log expects. If the file exists
+    but doesn't start with the header, the header is prepended before the
+    append (not written mid-file), so a log created by an older run -- or by
+    an earlier version -- is repaired without reordering existing rows.
+    """
+    row = [
+        datetime.datetime.now().isoformat(timespec="seconds"),
+        msg_hash,
+        recipient["name"],
+        recipient["normalized"],
+        status,
+    ]
+
+    if log_path.exists():
+        with log_path.open(newline="", encoding="utf-8") as fh:
+            first = next(csv.reader(fh), None)
+        if first == LOG_HEADER:
+            with log_path.open("a", newline="", encoding="utf-8") as fh:
+                csv.writer(fh).writerow(row)
+            return
+        # Starts headerless: prepend the header, keep old rows, append after.
+        body = log_path.read_text(encoding="utf-8")
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(LOG_HEADER)
+        with log_path.open("w", newline="", encoding="utf-8") as fh:
+            fh.write(buffer.getvalue())
+            fh.write(body)
+            csv.writer(fh).writerow(row)
+        return
+
+    with log_path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        if write_header:
-            writer.writerow([
-                "timestamp", "message_hash", "name", "phone", "status",
-            ])
-        writer.writerow([
-            datetime.datetime.now().isoformat(timespec="seconds"),
-            msg_hash,
-            recipient["name"],
-            recipient["normalized"],
-            status,
-        ])
+        writer.writerow(LOG_HEADER)
+        writer.writerow(row)
 
 
 # ---------------------------------------------------------------------------
 # Sending
 # ---------------------------------------------------------------------------
 
+def compose_message() -> str | None:
+    """Open an editor (like ``git commit``) so the user can type a multi-line
+    message, then return its text with the trailing newline trimmed.
+
+    Returns ``None`` if the buffer was left empty (or held only blank lines).
+    The editor is ``$VISUAL`` then ``$EDITOR``, falling back to ``vi``.
+    """
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    fd, path = tempfile.mkstemp(prefix="bridge_sms_", suffix=".txt")
+    os.close(fd)
+    try:
+        rc = subprocess.call([*shlex.split(editor), path])
+        if rc != 0:
+            sys.exit(f"Editor {editor!r} exited with status {rc}; aborting.")
+        text = Path(path).read_text(encoding="utf-8")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    text = text.rstrip("\n")
+    return text if text.strip() else None
+
+
 def render_message(template: str, recipient: dict) -> str:
     """Fill {first} if present; otherwise return the template verbatim."""
     return template.replace("{first}", recipient["first"])
+
+
+def report_phone_link(kc: KDEConnect) -> bool:
+    """Print a one-block KDE Connect status report; return reachability."""
+    status = kc.status()
+    reachable = bool(status.get("reachable"))
+    print(f"KDE Connect reachable: {reachable}")
+    print(f"  device: {status.get('name', 'unknown')}")
+    print(f"  battery: {status.get('battery', {}).get('charge', '?')}%")
+    if err := status.get("error"):
+        print(f"  error: {err}")
+    print("Note: this confirms the desktop<->phone link, NOT cellular "
+          "service or carrier delivery.")
+    return reachable
 
 
 def main() -> None:
@@ -403,9 +548,16 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--message", default=None,
-                        help="SMS text; {first} is replaced per recipient "
-                             "(required unless --check-phone no is used)")
+    msg_group = parser.add_mutually_exclusive_group()
+    msg_group.add_argument("--message", default=None,
+                           help="SMS text; {first} is replaced per recipient. "
+                                "Omit to compose the text in $EDITOR instead "
+                                "(see --edit).")
+    msg_group.add_argument("--edit", "-e", action="store_true",
+                           help="Compose the SMS in $VISUAL/$EDITOR (falls back "
+                                "to vi), like 'git commit'. Multi-line text is "
+                                "supported. Exits with 'No message found' if "
+                                "the buffer is left empty.")
     parser.add_argument("--file", "--ods", dest="ods", type=Path, default=None,
                         help="Signup spreadsheet ODS. Defaults to the current "
                              "month's file (e.g. 'Bridge Signup Thursday "
@@ -413,6 +565,13 @@ def main() -> None:
                              "(--ods is an accepted alias.)")
     parser.add_argument("--day", type=int, default=None,
                         help="Force a day-of-month column (default: next upcoming)")
+    parser.add_argument("--to", default=None,
+                        help="Send to ad-hoc phone number(s) instead of the "
+                             "spreadsheet: comma- or space-separated, e.g. "
+                             "'+13365551234, 336-555-9876'. Numbers are "
+                             "normalized/deduped like sheet entries. Useful "
+                             "for testing the phone path with a number you "
+                             "control.")
     parser.add_argument("--batch-size", type=int, default=10,
                         help="SMS per batch (default: 10)")
     parser.add_argument("--sleep-min", type=float, default=5,
@@ -438,15 +597,41 @@ def main() -> None:
                              "default) or 'x' (declined)")
     parser.add_argument("--log-file", type=Path, default=LOG_FILE_DEFAULT,
                         help=f"Send log CSV (default: {LOG_FILE_DEFAULT.name})")
-    parser.add_argument("--execute", action="store_true",
-                        help="Actually send SMS. Without this flag the script "
-                             "runs in dry-run mode (prints recipients, sends "
-                             "nothing).")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--execute", action="store_true",
+                      help="Actually send SMS. Without this flag the script "
+                           "runs in dry-run mode (prints recipients, sends "
+                           "nothing).")
+    mode.add_argument("--dry-run", action="store_true",
+                      help="Explicitly request dry-run mode: print the "
+                           "message and the phone numbers that would receive "
+                           "it, and send nothing (this is also the default).")
     parser.add_argument("--check-phone", choices=["yes", "no"], default="yes",
                         help="Check KDE Connect phone link and exit before any "
                              "send. Runs by default; pass 'no' to skip "
                              "(default: yes)")
+    parser.add_argument("--check-phone-only", action="store_true",
+                        help="Check the KDE Connect phone link and exit, without "
+                             "opening the editor or building a send. Implies "
+                             "--check-phone yes. Exits non-zero if the phone "
+                             "is not reachable.")
     args = parser.parse_args()
+
+    # --check-phone-only reports the link and stops, before the editor opens.
+    # Exit non-zero when the phone is unreachable, so scripts can react.
+    if args.check_phone_only:
+        if not report_phone_link(KDEConnect()):
+            sys.exit(1)
+        return
+
+    # Compose the message in an editor when --edit was given or no message was
+    # supplied: typing a text is easier than shell-quoting one (especially
+    # multi-line). This is what makes a bare invocation open $EDITOR/vim.
+    if args.edit or args.message is None:
+        composed = compose_message()
+        if composed is None:
+            sys.exit("No message found")
+        args.message = composed
 
     if args.sleep_min > args.sleep_max:
         sys.exit("--sleep-min must be <= --sleep-max")
@@ -456,26 +641,16 @@ def main() -> None:
         kc = KDEConnect()
         status = kc.status()
         reachable = bool(status.get("reachable"))
-        print(f"KDE Connect reachable: {reachable}")
-        print(f"  device: {status.get('name', 'unknown')}")
-        print(f"  battery: {status.get('battery', {}).get('charge', '?')}%")
-        if err := status.get("error"):
-            print(f"  error: {err}")
-        print("Note: this confirms the desktop<->phone link, NOT cellular "
-              "service or carrier delivery.")
+        report_phone_link(kc)
         print()
-        # Only the check was requested (no message) -> stop here.
-        if not args.message:
-            return
         # In execute mode the phone must be reachable; dry-run continues
         # regardless so the recipient list is still shown.
         if args.execute and not reachable:
             sys.exit(f"Phone not reachable via KDE Connect: "
                      f"{status.get('error', 'unknown')}")
 
-    # Past the check: a message is required to build the send.
-    if not args.message:
-        sys.exit("--message is required (unless --check-phone yes is used)")
+    # At this point args.message is always set (either --message or the
+    # editor).
 
     if args.always_call is None:
         always_call = set(ALWAYS_CALL)
@@ -484,19 +659,26 @@ def main() -> None:
     else:
         always_call = set(ALWAYS_CALL) | set(args.always_call)
 
-    # --- Parse the sheet and select the day ---
-    ods_path = args.ods or discover_sheet(SCRIPT_DIR)
-    rows = read_sheet(ods_path)
-    header_idx = find_header(rows)
-    days = parse_day_columns(rows[header_idx])
-    if not days:
-        raise SystemExit("No day columns found in the header.")
-    year, month = month_from_filename(ods_path)
-    day = pick_day(days, args.day, year, month)
-    day_col = days[day]
+    # --- Ad-hoc recipients (--to) or the spreadsheet ---
+    invalid: list[dict]
+    if args.to is not None:
+        recipients, invalid_raw = parse_targets(args.to)
+        invalid = [{"name": t, "phone": t} for t in invalid_raw]
+        ods_path = None
+        header_idx = day = day_col = None
+    else:
+        ods_path = args.ods or discover_sheet(SCRIPT_DIR)
+        rows = read_sheet(ods_path)
+        header_idx = find_header(rows)
+        days = parse_day_columns(rows[header_idx])
+        if not days:
+            raise SystemExit("No day columns found in the header.")
+        year, month = month_from_filename(ods_path)
+        day = pick_day(days, args.day, year, month)
+        day_col = days[day]
 
-    recipients, invalid = collect_declined(
-        rows, header_idx, day_col, AUDIENCE_MARKS[args.audience])
+        recipients, invalid = collect_declined(
+            rows, header_idx, day_col, AUDIENCE_MARKS[args.audience])
 
     # --- Split out always-call players ---
     def _call_only(r: dict) -> bool:
@@ -516,8 +698,11 @@ def main() -> None:
     recipients = [r for r in recipients if r["normalized"] not in sent_phones]
 
     # --- Report the plan ---
-    print(f"Spreadsheet: {ods_path}")
-    print(f"Header row: {header_idx}, day column: {day} (col {day_col})")
+    if ods_path is None:
+        print("Source: --to (ad-hoc numbers)")
+    else:
+        print(f"Spreadsheet: {ods_path}")
+        print(f"Header row: {header_idx}, day column: {day} (col {day_col})")
     print(f"Message: {args.message!r}")
     print(f"Message hash: {msg_hash}")
     print(f"Log file: {args.log_file}")
@@ -542,7 +727,8 @@ def main() -> None:
         print("No recipients to text. Nothing to do.")
         return
     if not args.execute:
-        print("(dry-run - use --execute to send SMS)")
+        print(f"(dry-run - would send {len(recipients)} SMS; "
+              "use --execute to send)")
         return
 
     # --- Verify KDE Connect before sending ---

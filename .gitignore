@@ -21,6 +21,9 @@ bridge_app.log
 *.png
 *.txt
 
+# signup spreadsheets (user data, not source)
+*.ods
+
 # node dependencies
 node_modules/
 
